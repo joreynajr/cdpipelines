@@ -1,6 +1,6 @@
 import os
 
-import atacseq, general, prepare, rnaseq
+import atacseq, general, prepare, rnaseq, islet_eqtl
 import convert_bed_to_saf
 
 _root = os.path.split(os.path.split(os.path.abspath(__file__))[0])[0]
