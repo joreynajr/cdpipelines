@@ -1,4 +1,7 @@
 import os
+import sys
+import re
+import pandas as pd
 
 from general import _make_dir
 from general import JobScript
@@ -420,6 +423,121 @@ class ATACJobScript(JobScript):
             with open(self.links_tracklines, "a") as f:
                 f.write(tf_lines)
         return excel, out1, out2
+    def _get_data_atacs_cell_type(self, data_atacs_id):
+        """
+        Determine the celltype for the data_atacs_id sample.
+        
+        Parameters
+        ----------
+        data_atacs_id : str
+            uuid from the data_atacs table.
+            
+        Returns
+        -------
+        celltype : str
+            the celltype as entered in database. 
+        """
+        sys.path.append('/projects/CARDIPS/database/Cardips/')
+        import django
+        django.setup()
+        from data.models import ATACS as data_atacs 
+        from subject.models import Subject as subject_subject
+        from django_pandas.io import read_frame
+
+        data_atacs_obj = data_atacs.objects.get(id=data_atacs_id)
+        
+        # Samples which have been linked 
+        if data_atacs_obj.sample != None: 
+            if data_atacs_obj.sample._meta.app_label in ['timecourse', 'data', 'family1070']:
+                celltype = data_atacs_obj.sample.tissue.cell
+                
+            elif data_atacs_obj.sample._meta.app_label == 'product':
+                # The product_pellets has a many to many relationship for the tissue for which 
+                # you have to check congruency. 
+                tissues = data_atacs_obj.sample.tissue.all()
+                if len(tissues) == 0:
+                    celltype = 'Cannot determine. product_atacs object does not have an tissues assigned.'
+                elif len(tissues) == 1:
+                    celltype = tissues[0].cell
+                else:
+                    flags = [True if x.cell.strip() == tissues[0].cell.strip() else False for x in tissues]
+                    if all(flags):
+                        celltype = tissues[0].cell
+                    else:
+                        celltype = 'Cannot determine. product_atacs object has multiple tissues with contradicting cell type.'
+                        
+            else:
+                celltype = 'Cannot determine. Trouble shoot the product_atacs_object.'
+        # Samples which have not been linked 
+        else:
+            type1_re = re.search('(HEK|HeLa|ISL)', data_atacs_obj.name)
+            type2_re = re.search('(FD[1-9])', data_atacs_obj.name)
+            type3_re = re.search('(FD1[1-9])', data_atacs_obj.name)
+            if type1_re:
+                celltype = type1_re.groups()[0]
+            elif type2_re:
+                celltype = 'K562'
+            elif type3_re:
+                celltype = 'CM'  
+            else:
+                celltype = 'Cannot determine. data_atacs object does not have a sample --> tissue relationship.'
+        return celltype 
+
+    def calculate_peak_qc_stats(self, data_atacs_id, bam, peak, variant_coverage, region_coverage, peak_qc_metrics, celltype, num_input_reads):
+        """
+        Calculate the quality control statistics for the atac's peak results.
+        
+        Parameters
+        ----------
+        data_atacs_id: str
+            the data_atacs_id generate inside of the CARDiPS database. 
+        bam : str
+            the sort_rmdup bam file after aligning and processing the atac sequencing results. 
+        peak : str
+            the narrowpeak file produced by macs2. 
+        variant_coverage : str
+            produced as a result of running _____script_name_____.
+        region_coverage : str
+            produced as a result of running _____script_name_____.
+        peak_qc_metrics : str
+            name of the output qc file. 
+        celltype : str
+            the cell type of the sample with the corresponding Data_atacs ID. 
+        num_input_reads : int
+            the number of input reads determined by picard. 
+        
+        Returns
+        -------
+        variant_coverage : str
+            produced as a result of running _____script_name_____.
+        region_coverage : str
+            produced as a result of running _____script_name_____.
+        peak_qc_metrics : str
+            name of the output qc file. 
+        """
+        
+        lines = []
+        lines.append('which conda;') 
+        lines.append('which python;')
+        lines.append('python /frazer01/home/joreyna/repos/cdpipelines/cdpipelines/scripts/calculate_peak_enrichment.py')
+        lines.append('-dataID {}'.format(data_atacs_id))
+        lines.append('-bam {}'.format(bam))
+        lines.append('-peak {}'.format(peak))
+        lines.append('-var_cov {}'.format(variant_coverage))
+        lines.append('-reg_cov {}'.format(region_coverage))
+        lines.append('-output {}'.format(peak_qc_metrics))
+        lines.append('--cellType {}'.format(celltype))
+        lines.append('--NumInputReads {}'.format(num_input_reads))
+        
+        with open(self.filename, 'a') as f:
+            for i, line in enumerate(lines):
+                if i == 0:
+                    f.write('{} \\\n'.format(line))
+                elif i < len(lines) - 1:
+                    f.write('\t{} \\\n'.format(line))
+                else:
+                    f.write('\t{}\n'.format(line))    
+        return variant_coverage, region_coverage, peak_qc_metrics
 
 def pipeline(
     r1_fastqs, 
@@ -463,7 +581,7 @@ def pipeline(
     bammarkduplicates_path='bammarkduplicates',
     featureCounts_path='featureCounts',
     fastq_dump_path='fastq-dump',
-):
+    ):
     """
     Make a SGE/shell scripts for running the entire ATAC-seq pipeline. The
     defaults are set for use on the Frazer lab's SGE scheduler on flh1/flh2.
@@ -510,7 +628,7 @@ def pipeline(
 
     find_intersecting_snps_path : str
         Path to find_intersecting_snps.py from WASP.
-    
+
     filter_remapped_reads_path : str
         Path to filter_remapped_reads.py from WASP.
 
@@ -537,7 +655,7 @@ def pipeline(
 
     vcf : str
         VCF file containing exonic variants used for allelic bias.
-    
+
     vcf_sample_name : str
         Sample name of this sample in the VCF file (if different than
         sample_name). For instance, the sample name in the VCF file may be the
@@ -605,7 +723,7 @@ def pipeline(
     # Bash commands to submit jobs. I'll collect these as I make the jobs and
     # then write them to a file at the end.
     submit_commands = []
-    
+
     ##### Job 1: Combine fastqs and align with STAR. #####
     job = ATACJobScript(
         sample_name, 
@@ -621,7 +739,7 @@ def pipeline(
         modules=modules,
     )
     alignment_jobname = job.jobname
-    
+
     # If needed, convert SRA files to fastq files. 
     # TODO: Eventually, I can also take bam files as input and convert them to
     # fastq if needed.
@@ -630,7 +748,7 @@ def pipeline(
                                          fastq_dump_path=fastq_dump_path)
         r1_fastqs = [r1]
         r2_fastqs = [r2]
-    
+
     # Input files.
     for fq in r1_fastqs + r2_fastqs:
         job.add_input_file(fq)
@@ -678,7 +796,7 @@ def pipeline(
         wait_for=[alignment_jobname]
     )
     fastqc_jobname = job.jobname
- 
+
     # Input files.
     job.add_input_file(combined_r1, delete_original=True)
     job.add_input_file(combined_r2, delete_original=True)
@@ -728,7 +846,7 @@ def pipeline(
         samtools_path=samtools_path,
     )
     job.add_temp_file(filtered_bam)
-    
+
     # Coordinate sort.
     coord_sorted_bam = job.sambamba_sort(
         filtered_bam, 
@@ -819,7 +937,7 @@ def pipeline(
     job.write_end()
     if not job.delete_sh:
         submit_commands.append(job.sge_submit_command())
-    
+
     ##### Job 4: Collect QC metrics. #####
     job = ATACJobScript(
         sample_name, 
@@ -836,7 +954,7 @@ def pipeline(
         wait_for=[sort_rmdup_index_jobname],
     )
     qc_metrics_jobname = job.jobname
-    
+
     # Input files.
     rmdup_bam = job.add_input_file(outdir_rmdup_bam)
 
@@ -876,7 +994,7 @@ def pipeline(
         wait_for=[alignment_jobname],
     )
     md5_jobname = job.jobname
-    
+
     # Input files.
     star_bam = job.add_input_file(outdir_star_bam)
 
@@ -974,7 +1092,7 @@ def pipeline(
     job.write_end()
     if not job.delete_sh:
         submit_commands.append(job.sge_submit_command())
-    
+
     ##### Job 7: Peak calling. #####
     job = ATACJobScript(
         sample_name, 
@@ -991,7 +1109,7 @@ def pipeline(
         wait_for=[sort_rmdup_index_jobname],
     )
     macs2_jobname = job.jobname
-    
+
     # Input files.
     tlen_bam = job.add_input_file(outdir_tlen_bam)
 
@@ -1017,7 +1135,7 @@ def pipeline(
     job.write_end()
     if not job.delete_sh:
         submit_commands.append(job.sge_submit_command())
-    
+
     ##### Job 8: Count reads in peaks. #####
     job = ATACJobScript(
         sample_name, 
@@ -1033,7 +1151,7 @@ def pipeline(
         wait_for=[macs2_jobname],
     )
     counts_jobname = job.jobname
-    
+
     # Input files.
     query_sorted_bam = job.add_input_file(outdir_query_sorted_bam)
     tlen_140_query_sorted_bam = job.add_input_file(outdir_tlen_140_query_sorted_bam)
@@ -1063,7 +1181,7 @@ def pipeline(
     job.write_end()
     if not job.delete_sh:
         submit_commands.append(job.sge_submit_command())
-  
+
     if promoter_bed or merged_promoter_bed or gene_promoter_bed:
         ##### Job 9: Count reads in promoters. #####
         job = ATACJobScript(
@@ -1164,7 +1282,9 @@ def pipeline(
         job.write_end()
         if not job.delete_sh:
             submit_commands.append(job.sge_submit_command())
-   
+
+    ##### Job 11: Peak QC Statistics  
+
     # We'll count the allele coverage for heterozygous alleles to perform an
     # identity check. We'll only do this if a VCF was provided.
     if vcf:
@@ -1255,6 +1375,55 @@ def pipeline(
     else:
         return None
 
+def peak_qc_pipeline(
+    outdir, 
+    sample_name, 
+    linkdir=None,
+    webpath_file=None,
+    conda_env=None,
+    modules=None,
+    queue=None):
+
+    ##### Job 1: Peak QC Statistics  
+    job = ATACJobScript(
+        sample_name, 
+        job_suffix = 'peak_qc',
+        outdir=os.path.join(outdir, 'qc'),
+        threads=1, 
+        memory=48, 
+        linkdir=linkdir,
+        webpath=webpath_file,
+        queue=queue,
+        conda_env=conda_env, 
+        modules=modules,
+    )
+    peak_qc_jobname = job.jobname
+       
+    # Input files.
+    sort_rmdup_bam = job.add_input_file(os.path.join(outdir, 'alignment/', '{}_sorted_rmdup.bam'.format(sample_name)))
+    narrow_peaks = job.add_input_file(os.path.join(outdir, 'macs2/', '{}_peaks.narrowPeak'.format(sample_name)))
+
+    # Output files. 
+    variant_coverage = job.add_output_file(os.path.join(outdir, 'qc/', '{}_variant.coverage'.format(sample_name)))
+    region_coverage = job.add_output_file(os.path.join(outdir, 'qc/', '{}_region.coverage'.format(sample_name)))
+    peak_qc_metrics = job.add_output_file(os.path.join(outdir, 'qc/', '{}_peak_qc.tsv'.format(sample_name)))
+
+    celltype = job._get_data_atacs_cell_type(sample_name)
+    # Extracting Number of input reads from STAR log file. 
+    aln_metrics = pd.read_csv( \
+        '/projects/CARDIPS/pipeline/ATACseq/sample/{0}/alignment/{0}_Log.final.out'.format(sample_name), \
+          header=None, sep='|', index_col=0, skiprows=[4, 7, 22, 27])
+    aln_metrics.iloc[:, 0] = aln_metrics.iloc[:, 0].apply(lambda x: x.strip())
+    aln_metrics.index = aln_metrics.index.str.strip()
+    num_input_reads = int(aln_metrics.ix['Number of input reads', 1])
+
+    variant_coverage, region_coverage, peak_qc_metrics = \
+        job.calculate_peak_qc_stats(sample_name, sort_rmdup_bam, narrow_peaks, variant_coverage, region_coverage, peak_qc_metrics, celltype, num_input_reads)
+
+    job.write_end()
+
+    return os.path.join(outdir, 'sh/', '{}_peak_qc.sh'.format(sample_name))
+
 def merge_samples(
     bams, 
     outdir, 
@@ -1270,7 +1439,7 @@ def merge_samples(
     bedtools_path='bedtools',
     bedGraphToBigWig_path='bedGraphToBigWig',
     sambamba_path='sambamba',
-):
+    ):
     """
     Make a SGE/shell scripts for merging ATAC-seq bam files and calling peaks.
     Generally these peak calls will be combined with peak calls from other
@@ -1356,7 +1525,7 @@ def merge_samples(
     # Bash commands to submit jobs. I'll collect these as I make the jobs and
     # then write them to a file at the end.
     submit_commands = []
-    
+
     ##### Job 1: Merge bam files. #####
     job = ATACJobScript(
         sample_name, 
@@ -1467,7 +1636,7 @@ def merge_samples(
     job.write_end()
     if not job.delete_sh:
         submit_commands.append(job.sge_submit_command())
-    
+
     ##### Job 3: Peak calling. #####
     job = ATACJobScript(
         sample_name, 
@@ -1484,7 +1653,7 @@ def merge_samples(
         wait_for=[merge_jobname],
     )
     macs2_jobname = job.jobname
-    
+
     # Input files.
     merged_bam = job.add_input_file(outdir_merged_bam)
 
@@ -1510,7 +1679,7 @@ def merge_samples(
     job.write_end()
     if not job.delete_sh:
         submit_commands.append(job.sge_submit_command())
-    
+
     ##### Submission script #####
     # Now we'll make a submission script that submits the jobs with the
     # appropriate dependencies.
@@ -1560,7 +1729,7 @@ def peak_analysis(
     bcftools_path='bcftools',
     gatk_path='$GATK',
     bigWigAverageOverBed_path='bigWigAverageOverBed',
-):
+    ):
     """
     Make SGE/shell scripts for counting reads in peaks and calculating allelic
     bias given a bam file and a bed file of regions.
@@ -1634,7 +1803,7 @@ def peak_analysis(
     # Bash commands to submit jobs. I'll collect these as I make the jobs and
     # then write them to a file at the end.
     submit_commands = []
-    
+
     # Set default queue for Frazer lab settings. None will just go to the
     # default queue. For jobs that need a specific queue, I'll set the queue
     # below.
@@ -1673,7 +1842,7 @@ def peak_analysis(
     job.write_end()
     if not job.delete_sh:
         submit_commands.append(job.sge_submit_command())
-    
+
     # ##### Job 2: WASP first step. #####
     # job = ATACJobScript(
     #     sample_name, 
