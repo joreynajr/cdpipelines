@@ -483,7 +483,7 @@ class ATACJobScript(JobScript):
                 celltype = 'Cannot determine. data_atacs object does not have a sample --> tissue relationship.'
         return celltype 
 
-    def calculate_peak_qc_stats(self, data_atacs_id, bam, peak, variant_coverage, region_coverage, peak_qc_metrics, celltype, num_input_reads):
+    def calculate_peak_qc_stats(self, data_atacs_id, bam, peak, variant_coverage, region_coverage, peak_qc_metrics, celltype, num_input_reads, log_path):
         """
         Calculate the quality control statistics for the atac's peak results.
         
@@ -517,8 +517,6 @@ class ATACJobScript(JobScript):
         """
         
         lines = []
-        lines.append('which conda;') 
-        lines.append('which python;')
         lines.append('python /frazer01/home/joreyna/repos/cdpipelines/cdpipelines/scripts/calculate_peak_enrichment.py')
         lines.append('-dataID {}'.format(data_atacs_id))
         lines.append('-bam {}'.format(bam))
@@ -526,8 +524,9 @@ class ATACJobScript(JobScript):
         lines.append('-var_cov {}'.format(variant_coverage))
         lines.append('-reg_cov {}'.format(region_coverage))
         lines.append('-output {}'.format(peak_qc_metrics))
-        lines.append('--cellType {}'.format(celltype))
+        lines.append('--cellType "{}"'.format(celltype))
         lines.append('--NumInputReads {}'.format(num_input_reads))
+        lines.append('-logPath {}'.format(log_path))
         
         with open(self.filename, 'a') as f:
             for i, line in enumerate(lines):
@@ -1390,7 +1389,7 @@ def peak_qc_pipeline(
         job_suffix = 'peak_qc',
         outdir=os.path.join(outdir, 'qc'),
         threads=1, 
-        memory=48, 
+        memory=4, 
         linkdir=linkdir,
         webpath=webpath_file,
         queue=queue,
@@ -1407,6 +1406,7 @@ def peak_qc_pipeline(
     variant_coverage = job.add_output_file(os.path.join(outdir, 'qc/', '{}_variant.coverage'.format(sample_name)))
     region_coverage = job.add_output_file(os.path.join(outdir, 'qc/', '{}_region.coverage'.format(sample_name)))
     peak_qc_metrics = job.add_output_file(os.path.join(outdir, 'qc/', '{}_peak_qc.tsv'.format(sample_name)))
+    log = job.add_output_file(os.path.join(outdir, 'logs/', '{}_peak_qc.log'.format(sample_name)))
 
     celltype = job._get_data_atacs_cell_type(sample_name)
     # Extracting Number of input reads from STAR log file. 
@@ -1418,7 +1418,7 @@ def peak_qc_pipeline(
     num_input_reads = int(aln_metrics.ix['Number of input reads', 1])
 
     variant_coverage, region_coverage, peak_qc_metrics = \
-        job.calculate_peak_qc_stats(sample_name, sort_rmdup_bam, narrow_peaks, variant_coverage, region_coverage, peak_qc_metrics, celltype, num_input_reads)
+        job.calculate_peak_qc_stats(sample_name, sort_rmdup_bam, narrow_peaks, variant_coverage, region_coverage, peak_qc_metrics, celltype, num_input_reads, log)
 
     job.write_end()
 

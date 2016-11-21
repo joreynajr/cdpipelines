@@ -171,7 +171,7 @@ def QC_function(dataID,region_coverage_path,var_coverage_path,cellType,NumInputR
     elif cellType=="CM":
         subp2=subprocess.Popen(["module load bedtools; bedtools coverage -sorted -b "+bamFile+" -a /projects/CARDIPS/pipeline/ATACseq/reference_files/CM_active_elements.bed > "+region_coverage_path],shell=True)
     subp2.wait()
-    activeReads=sum([int(line.strip().split()[3]) for line in open("QC_temp_read_coverage.cov","r")])
+    activeReads=sum([int(line.strip().split()[3]) for line in open(region_coverage_path,"r")])
     fractionActiveReads=float(activeReads)/NumInputReads
 
     logging.info("Finding Variant Coverage")
@@ -181,7 +181,7 @@ def QC_function(dataID,region_coverage_path,var_coverage_path,cellType,NumInputR
     elif cellType=="CM":
         subp3=subprocess.Popen(["module load samtools; samtools mpileup -A --positions /projects/CARDIPS/pipeline/ATACseq/reference_files/CM_ATAC_Common_Vars.positions -o "+var_coverage_path+" "+bamFile],shell=True)
     subp3.wait()
-    meanVarCov=np.mean([int(line.strip().split()[3]) for line in open("QC_temp_read_coverage.cov","r")])
+    meanVarCov=np.mean([int(line.strip().split()[3]) for line in open(var_coverage_path,"r")])
 
     res=[ID,fractionActivePeaks,fractionActiveReads,meanVarCov,"No Error During QC"]
     results.append(res)
@@ -217,13 +217,13 @@ logging.info("""
 =====================
 ATACseq Peak QC
 Author:  Bill Greenwald
-Version: 1.2
+Version: 1.3
 =====================
 """)
 
 
 # In[2]:
-
+results = []
 if args['cellType']=="Not Given" or args['NumInputReads']==-1:
     if args['cellType']=="Not Given" and args['NumInputReads']==-1:
         cellType,NumInputReads=findCellTypeAndReadCount(args['input'])
@@ -245,7 +245,7 @@ if args['cellType']=="Not Given" or args['NumInputReads']==-1:
 else:
     cellType=args['cellType']
     if cellType!="iPSC" and cellType!="CM":
-        res = [dataID, '', '','','Celltype {} not supported'.format(cellType)]
+        res = [args['dataID'], '', '','','Celltype {} not supported'.format(cellType)]
         results.append(res)
         temp=pd.DataFrame(results,columns=["Data ID","Fraction Peaks in Active Elements","Fraction Reads in Active Elements","Mean Coverage of Common Vars","Error Code"])
         temp.to_csv(args['output'],sep="\t",index=False)
@@ -253,6 +253,4 @@ else:
     NumInputReads=args['NumInputReads']
 QC_function(args['dataID'],args['reg_cov'],args['var_cov'],cellType,NumInputReads,args['peak'],args['bam']).to_csv(args['output'],sep="\t",index=False)
 
-
-# # Debugging
 
