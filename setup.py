@@ -13,13 +13,20 @@ ep = {
                         'make_wasp_input = cdpipelines.make_wasp_input:main',
                         'scale_bedgraph = cdpipelines.scale_bedgraph:main']
 }
+scripts = ['cdpipelines/scripts/sample_check/callVariants.sh',
+	'cdpipelines/scripts/sample_check/modifyVCFs.sh',
+	'cdpipelines/scripts/sample_check/plink.sh',
+	'cdpipelines/scripts/sample_check/rna_sample_match.sh',
+	'cdpipelines/scripts/calculate_peak_enrichment.py',
+	'cdpipelines/scripts/queryDatabase.py'
+]
 
 setup(
     name = 'cdpipelines',
     packages=['cdpipelines'],
     entry_points=ep,
-	scripts = ['cdpipelines/scripts/sample_check/rna_sample_match.sh'],
-    version = '0.0.7',
+	scripts = scripts,
+    version = '0.0.8',
     author = 'Christopher DeBoever',
     author_email = 'cdeboever3@gmail.com',
 	revised_by = 'Joaquin Reyna',
