@@ -6,10 +6,10 @@
 #$ -e /frazer01/home/mdonovan/twin_variation/rna_analysis/variants/sh/run.out   ### redirect stderr to this file
 #$ -o /frazer01/home/mdonovan/twin_variation/rna_analysis/variants/sh/run.err   ### redirect stdout to this file
 
-R=/software/R-3.2.2-cardips/bin/Rscript
+# Module load cardips should override this.
+module load cardips  
+
 FASTA=/publicdata/hg19_20151104/hg19_sorted.fa
-SAMTOOLS=/software/samtools-1.2/samtools
-BCFTOOLS=/software/bcftools-1.2/bcftools
 SNPBEDFILE=/frazer01/home/mdonovan/sample_identity_check/reference/1kg_AF45_55_snps.bed
 
 if [ $# -eq 0 ]
@@ -32,13 +32,8 @@ if [ ! -d "$PLINK" ]; then
 	mkdir $PLINK
 fi
 
-
-
 echo "calling variants on: " $DATA_ID
 variant_file=${vcf_folder}/${DATA_ID}"_1kg_variants.vcf.gz"
-# /frazer01/home/joreyna/repos/cdpipelines/cdpipelines/scripts/sample_check
-source /frazer01/home/joreyna/repos/cdpipelines/cdpipelines/scripts/sample_check/callVariants.sh $DATA_ID $DATA_ID_BAM $vcf_folder
-
-source /frazer01/home/joreyna/repos/cdpipelines/cdpipelines/scripts/sample_check/modifyVCFs.sh $variant_file $vcf_folder
-
-source /frazer01/home/joreyna/repos/cdpipelines/cdpipelines/scripts/sample_check/plink.sh $vcf_folder $PLINK $DATA_ID
+source callVariants.sh $DATA_ID $DATA_ID_BAM $vcf_folder
+source modifyVCFs.sh $variant_file $vcf_folder
+source plink.sh $vcf_folder $PLINK $DATA_ID
