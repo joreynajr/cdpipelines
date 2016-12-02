@@ -10,8 +10,6 @@ sortedIN=$1
 plinkOUT=$2
 DATA_ID=$3
 
-# PLINK=/frazer01/software/plink-1.90b3x/plink
-# VCFTOOLS=/software/vcftools-0.1.14/bin/vcftools
 module load plink
 module load vcftools 
 

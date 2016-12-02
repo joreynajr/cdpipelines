@@ -6,7 +6,6 @@
 #$ -e /frazer01/home/mdonovan/twin_variation/rna_analysis/variants/sh/run.out   ### redirect stderr to this file
 #$ -o /frazer01/home/mdonovan/twin_variation/rna_analysis/variants/sh/run.err   ### redirect stdout to this file
 
-# Module load cardips should override this.
 module load cardips  
 
 FASTA=/publicdata/hg19_20151104/hg19_sorted.fa

@@ -1,13 +1,9 @@
 #!/bin/bash
 
-
 SAMPLE_NAME=$1
 BAM=$2
 VCF=$3
 
-# Module load cardips should override this.
-# SAMTOOLS=/software/samtools-1.2/samtools
-# BCFTOOLS=/software/bcftools-1.2/bcftools
 module load samtools 
 module load bcftools  
 
