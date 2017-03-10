@@ -2,6 +2,7 @@ import os
 
 from general import _make_dir
 from general import JobScript
+from glob import glob
 
 class RNAJobScript(JobScript):
     def star_align(
@@ -561,6 +562,51 @@ class RNAJobScript(JobScript):
         with open(self.links_tracklines, "a") as f:
             f.write(url + '\n')
 
+    def check_sample_identity(self, sort_rmdup_fn):
+        '''
+        Check the given sample against all other iPSCORE samples for 
+        the correct identity.
+        
+        Note: must be run after the bam file has been sorted and 
+        duplicates have been marked.
+        
+        Parameters
+        ----------
+        sort_rmdup_fn: str
+            the BAM file after sorting and marking duplicates. 
+
+        Returns
+        -------
+           out_fns: list
+            all the files resulting from the sample identity check. The
+            files will always be listed by plink files first
+            (alphabetically ordered) followed by the 1KG sample vcf. 
+        '''
+
+        lines = []
+        #lines.append('rna_sample_match.sh {}'.format(self.outdir)
+        sample_dir = self.outdir.split('/')[0:-1]
+
+        # Calling Variants 
+        vcf_dir = os.path.join(self.outdir, '{0}_sample_swap/'.format(self.sample_name))
+        _make_dir(vcf_dir)
+        lines.append('source callVariants.sh {} {} {}'.format(self.sample_name, sort_rmdup_fn, vcf_dir))
+        # Processing the VCF
+        one_kg_vcf = os.path.join(vcf_dir, '{}_1kg_variants.vcf.gz'.format(self.sample_name))
+        lines.append('source modifyVCFs.sh {} {}'.format(one_kg_vcf, vcf_dir))
+        # Calculating identity 
+        plink_dir = os.path.join(vcf_dir, 'plink/')
+        _make_dir(plink_dir)
+        lines.append('source plink.sh {} {}'.format(vcf_dir, plink_dir, self.sample_name))
+
+        # Writing Command Script 
+        with open(self.filename, 'a') as f:
+                f.write('\n'.join(lines))
+        out_fns = []
+        out_fns.append(one_kg_vcf)
+        out_fns.extend(glob(os.path.join(self.outdir, '{}_sample_swap/plink/*'.format(self.sample_name))))
+        return out_fns  
+
 def pipeline(
     r1_fastqs, 
     r2_fastqs, 
@@ -803,31 +849,40 @@ def pipeline(
     # If needed, convert SRA files to fastq files. 
     # TODO: Eventually, I can also take bam files as input and convert them to
     # fastq if needed.
-    if r1_fastqs is None and r1_fastqs is None and sra_files:
+    if r1_fastqs is None and r2_fastqs is None and sra_files:
         r1,r2 = job.convert_sra_to_fastq(sra_files,
                                          fastq_dump_path=fastq_dump_path)
         r1_fastqs = [r1]
         r2_fastqs = [r2]
     
     # Input files.
-    for fq in r1_fastqs + r2_fastqs:
-        job.add_input_file(fq)
+    if r2_fastqs is not None:
+        for fq in r1_fastqs + r2_fastqs:
+            job.add_input_file(fq)
+    else:
+        for fq in r1_fastqs:
+            job.add_input_file(fq)
 
     # Combine R1 and R2 fastqs.
     if type(r1_fastqs) == str:
         r1_fastqs = [r1_fastqs]
     if type(r2_fastqs) == str:
         r2_fastqs = [r2_fastqs]
+
     r1_fastqs = [os.path.realpath(x) for x in r1_fastqs]
-    r2_fastqs = [os.path.realpath(x) for x in r2_fastqs]
     combined_r1 = job.combine_fastqs(r1_fastqs, suffix='R1', bg=True)
-    combined_r2 = job.combine_fastqs(r2_fastqs, suffix='R2', bg=True)
-    with open(job.filename, "a") as f:
-            f.write('\nwait\n\n')
     # We don't want to keep the fastqs indefinitely, but we need them for the
     # fastQC step later.
     combined_r1 = job.add_output_file(combined_r1)
-    combined_r2 = job.add_output_file(combined_r2)
+
+    if r2_fastqs is None:
+        combined_r2 = '' 
+    else:
+        r2_fastqs = [os.path.realpath(x) for x in r2_fastqs]
+        combined_r2 = job.combine_fastqs(r2_fastqs, suffix='R2', bg=True)
+        combined_r2 = job.add_output_file(combined_r2)
+    with open(job.filename, "a") as f:
+            f.write('\nwait\n\n')
 
     # Align reads.
     (star_bam, log_out, log_final_out, log_progress_out, sj_out, 
@@ -864,8 +919,12 @@ def pipeline(
     job.add_input_file(combined_r2, delete_original=True)
 
     # Run fastQC.
-    fastqc_html, fastqc_zip = job.fastqc([combined_r1, combined_r2],
-                                         fastqc_path)
+    if combined_r2 is not None:
+        fastqc_html, fastqc_zip = job.fastqc([combined_r1, combined_r2],
+                                             fastqc_path)
+    else:
+        fastqc_html, fastqc_zip = job.fastqc([combined_r1, ''],
+                                             fastqc_path)
     [job.add_output_file(x) for x in fastqc_html + fastqc_zip]
         
     job.write_end()
@@ -1447,6 +1506,31 @@ def pipeline(
         job.add_output_file(locus_outfile)
         job.add_output_file(snv_outfile)
 
+        job.write_end()
+        if not job.delete_sh:
+            submit_commands.append(job.sge_submit_command())
+
+        ##### Job 13: Run sample identity check. #####
+        job = RNAJobScript(
+            sample_name,
+            job_suffix='sample_identity_check',
+            outdir=os.path.join(outdir, 'qc'),
+            threads=4, 
+            memory=4, 
+            linkdir=linkdir,
+            webpath=webpath,
+            tempdir=tempdir, 
+            queue=default_queue,
+            conda_env=conda_env, 
+            modules=modules,
+            wait_for=[sort_mdup_index_jobname],
+        )
+        sample_check_jobname = job.jobname
+
+        job.add_input_file(mdup_bam)
+        out_fns = job.check_sample_identity(mdup_bam)
+        for fn in out_fns:
+            job.add_output_file(fn)
         job.write_end()
         if not job.delete_sh:
             submit_commands.append(job.sge_submit_command())

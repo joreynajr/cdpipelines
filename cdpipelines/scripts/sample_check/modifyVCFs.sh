@@ -1,12 +1,5 @@
 #!/bin/bash
 
-#$ -N sampleMatching
-#$ -pe smp 4      ### specify number of cores requested
-#$ -l week       ### specify queue ([short, week, long, opt], default is all)
-#$ -e /frazer01/home/mdonovan/twin_variation/rna_analysis/variants/sh/run.out   ### redirect stderr to this file
-#$ -o /frazer01/home/mdonovan/twin_variation/rna_analysis/variants/sh/run.err   ### redirect stdout to this file
-
-
 variant_file=$1
 VCF=$2
 filename=${variant_file##*/}
