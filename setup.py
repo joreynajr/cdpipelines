@@ -26,7 +26,7 @@ setup(
     packages=['cdpipelines'],
     entry_points=ep,
 	scripts = scripts,
-    version = '0.0.10',
+    version = '0.0.11',
     author = 'Christopher DeBoever, Joaquin Reyna',
     author_email = 'cdeboever3@gmail.com, j2reyna@ucsd.edu',
     description = ('Various bioinformatics pipelines.'),

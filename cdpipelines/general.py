@@ -1599,6 +1599,62 @@ class JobScript:
         with open(self.filename, "a") as f:
             f.write(lines)
         return out
+
+	def cutadapt_pe_trim(
+		self,
+		r1,
+		r2,
+		r1_out,
+		r2_out,
+		d50_adapter='/frazer01/home/joreyna/projects/rnaseq/trimming_experiment/output/adapters/D501-D508_trim_seq_rc.txt',
+		d70_adapter='/frazer01/home/joreyna/projects/rnaseq/trimming_experiment/output/adapters/D701-D712_trim_seq.txt',
+		overlap='3', 
+		bg=False,
+	):
+		"""
+		Cut a specified number of bases from a fastq file using cutadapt.
+		Cutadapt should be installed in your Python environment.
+
+		Parameters
+		----------
+		r1: str
+			Fastq file with R1 reads. 
+		r2: str
+			Fastq file with R2 reads. 
+		r1_out: str
+			Output fastq file with trimmed R1 reads. 
+		r2_out: str
+			Output fastq file with trimmed R2 reads. 
+		d50_adapter: str 
+			Path to the file containing Illumina D50* adapter sequences to trim. 
+		d70_adapter: str 
+			Path to the file containing Illumina D70* adapter sequences to trim. 
+		overlap: str 
+			The minimum amount of overlap to trim using cutadapt 
+		bg : boolean
+			Whether to run the process in the background (i.e. include an
+			ampersand at the end of the command).
+
+		Returns
+		-------
+		r1_out : str
+			Path to the R1 output fastq files.
+		r2_out : str
+			Path to the R2 output fastq files.
+
+		"""
+		d50_adapter = open(d50_adapter).read().strip()
+		d70_adapter = open(d70_adapter).read().strip()
+
+		lines = 'cutadapt -a {} -A  {} -o {} -p {} -O {} {} {}'.format(d70_adapter, d50_adapter, r1_out, r2_out, overlap, r1, r2)
+		if bg:
+			lines += ' &\n\n'
+		else:
+			lines += '\n\n'
+
+		with open(self.filename, "a") as f:
+			f.write(lines)
+		return r1_out, r2_out 
     
     def bedgraph_to_bigwig(
         self,
@@ -1685,6 +1741,7 @@ class JobScript:
         fastqs,
         suffix=None,
         bg=False,
+		scale_down=False
     ):
         """
         Cat the fastqs together into a single file. If fastqs only contains one
@@ -1697,6 +1754,9 @@ class JobScript:
     
         suffix : str
             Add this to the combined file name (for instance, R1 or R2).
+
+        scale_down : bool 
+            Scales down the data so there are only 250 reads in the fastq.
     
         Returns
         -------
@@ -1709,11 +1769,14 @@ class JobScript:
             root += '_' + suffix
         out_fastq = os.path.join(self.tempdir, root + '.fastq.gz')
         fastqs = sorted(fastqs)
-        if len(fastqs) > 1:
-            lines = 'cat \\\n\t{} \\\n\t> {}'.format(' \\\n\t'.join(fastqs),
-                                                     out_fastq)
-        else:
-            lines = 'ln -s \\\n\t{} \\\n\t{}'.format(fastqs[0], out_fastq)
+
+		if scale_down: # Scaled down for testing. 
+			lines = 'cat \\\n\t{} \\\n\t | head -n 1000 > {}'.format(' \\\n\t'.join(fastqs),
+		else:
+			if len(fastqs) > 1:
+				lines = 'cat \\\n\t{} \\\n\t> {}'.format(' \\\n\t'.join(fastqs),
+			else:
+				lines = 'ln -s \\\n\t{} \\\n\t{}'.format(fastqs[0], out_fastq)
         if bg:
             lines += ' &\n\n'
         else:
