@@ -439,7 +439,7 @@ class ATACJobScript(JobScript):
 		return excel, out1, out2
 	def _get_data_atacs_cell_type(self, data_atacs_id):
 		"""
-		Determine the celltype for the data_atacs_id sample.
+		Determine the celltype for the data_atacs_id sample. JR made. 
 		
 		Parameters
 		----------
@@ -1574,7 +1574,8 @@ def peak_qc_pipeline(
 	webpath_file=None,
 	conda_env=None,
 	modules=None,
-	queue=None):
+	queue=None,
+	global_celltype=None):
 
 	##### Job 1: Peak QC Statistics  
 	job = ATACJobScript(
@@ -1601,10 +1602,14 @@ def peak_qc_pipeline(
 	peak_qc_metrics = job.add_output_file(os.path.join(outdir, 'qc/', '{}_peak_qc.tsv'.format(sample_name)))
 	log = job.add_output_file(os.path.join(outdir, 'logs/', '{}_peak_qc.log'.format(sample_name)))
 
-	celltype = job._get_data_atacs_cell_type(sample_name)
+	if global_celltype == None:	
+		celltype = job._get_data_atacs_cell_type(sample_name)
+	else:
+		celltype = global_celltype
+
 	# Extracting Number of input reads from STAR log file. 
 	aln_metrics = pd.read_csv( \
-		'/projects/CARDIPS/pipeline/ATACseq/sample/{0}/alignment/{0}_Log.final.out'.format(sample_name), \
+		os.path.join(outdir, 'alignment/{0}_Log.final.out'.format(sample_name)), \
 		  header=None, sep='|', index_col=0, skiprows=[4, 7, 22, 27])
 	aln_metrics.iloc[:, 0] = aln_metrics.iloc[:, 0].apply(lambda x: x.strip())
 	aln_metrics.index = aln_metrics.index.str.strip()
