@@ -1788,6 +1788,7 @@ def trim_pipeline(
 		default_queue = queue
 
 	##### Job 1: Combine fastqs and align with STAR. #####
+	#print('##### Job 1: Combine fastqs and align with STAR. #####')
 	job = RNAJobScript(
 		sample_name, 
 		job_suffix='alignment',
@@ -1878,6 +1879,7 @@ def trim_pipeline(
 		submit_commands.append(job.sge_submit_command())
 
 	##### Job 2: Run fastQC. ##### 
+	#print('##### Job 2: Run fastQC. #####')
 	job = RNAJobScript(
 		sample_name, 
 		job_suffix='fastqc', 
@@ -1912,6 +1914,7 @@ def trim_pipeline(
 		submit_commands.append(job.sge_submit_command())
 
 	##### Job 3: Coordinate sort, mark duplicates and index bam. #####
+	#print('##### Job 3: Coordinate sort, mark duplicates and index bam. #####')
 	job = RNAJobScript(
 		sample_name, 
 		job_suffix = 'sort_mdup_index',
@@ -1978,6 +1981,7 @@ def trim_pipeline(
 	bam_index = outdir_bam_index
 
 	##### Job 4: Collect Picard metrics. #####
+	#print('##### Job 4: Collect Picard metrics. #####')
 	job = RNAJobScript(
 		sample_name, 
 		job_suffix='picard_metrics',
@@ -2032,6 +2036,7 @@ def trim_pipeline(
 		submit_commands.append(job.sge_submit_command())
 
 	##### Job 5: Make md5 hash for final bam file. #####
+	#print('##### Job 5: Make md5 hash for final bam file. #####')
 	job = RNAJobScript(
 		sample_name, 
 		job_suffix='md5',
@@ -2060,6 +2065,7 @@ def trim_pipeline(
 		submit_commands.append(job.sge_submit_command())
 	   
 	##### Job 6: Make bigwig files for final bam file. #####
+	#print('##### Job 6: Make bigwig files for final bam file. #####')
 	job = RNAJobScript(
 		sample_name, 
 		job_suffix='bigwig',
@@ -2195,6 +2201,7 @@ def trim_pipeline(
 		submit_commands.append(job.sge_submit_command())
 	
 	##### Job 7: Get featureCounts and DEXSeq counts. #####
+	#print('##### Job 7: Get featureCounts and DEXSeq counts. #####')
 	job = RNAJobScript(
 		sample_name, 
 		job_suffix = 'counts',
@@ -2245,6 +2252,7 @@ def trim_pipeline(
 		submit_commands.append(job.sge_submit_command())
 	
 	##### Job 8: Run RSEM. #####
+	#print('##### Job 8: Run RSEM. #####')
 	job = RNAJobScript(
 		sample_name, 
 		job_suffix = 'rsem',
@@ -2283,6 +2291,7 @@ def trim_pipeline(
 	# We'll only go through the ASE steps if a VCF was provided.
 	if vcfs:
 		##### Job 9: WASP first step. #####
+		#print('##### Job 9: WASP first step. #####')
 		job = RNAJobScript(
 			sample_name, 
 			job_suffix = 'wasp_allele_swap',
@@ -2338,7 +2347,8 @@ def trim_pipeline(
 		if not job.delete_sh:
 			submit_commands.append(job.sge_submit_command())
 		
-		##### Job 10: WASP second step. #####
+		##### Job 10: wasp second step. #####
+		#print('##### Job 10: wasp second step. #####')
 		job = RNAJobScript(
 			sample_name, 
 			job_suffix='wasp_remap',
@@ -2375,7 +2385,8 @@ def trim_pipeline(
 		if not job.delete_sh:
 			submit_commands.append(job.sge_submit_command())
 		
-		##### Job 11: WASP third step. #####
+		##### Job 11: wasp third step. #####
+		#print('##### Job 11: wasp third step. #####')
 		job = RNAJobScript(
 			sample_name, 
 			job_suffix = 'wasp_alignment_compare',
@@ -2447,7 +2458,8 @@ def trim_pipeline(
 		if not job.delete_sh:
 			submit_commands.append(job.sge_submit_command())
 		
-		##### Job 12: Run MBASED for ASE. #####
+		##### Job 12: run mbased for ase. #####
+		#print('##### Job 12: run mbased for ase. #####')
 		if queue == 'frazer':
 			q = 'opt'
 		else:
@@ -2490,30 +2502,31 @@ def trim_pipeline(
 		if not job.delete_sh:
 			submit_commands.append(job.sge_submit_command())
 
-		##### Job 13: Run sample identity check. #####
-		job = RNAJobScript(
-			sample_name,
-			job_suffix='sample_identity_check',
-			outdir=os.path.join(outdir, 'qc'),
-			threads=4, 
-			memory=4, 
-			linkdir=linkdir,
-			webpath=webpath,
-			tempdir=tempdir, 
-			queue=default_queue,
-			conda_env=conda_env, 
-			modules=modules,
-			wait_for=[sort_mdup_index_jobname],
-		)
-		sample_check_jobname = job.jobname
+	##### Job 13: Run sample identity check. #####
+	#print('Job 13: Run sample identity check.')
+	job = RNAJobScript(
+		sample_name,
+		job_suffix='sample_identity_check',
+		outdir=os.path.join(outdir, 'qc'),
+		threads=4, 
+		memory=4, 
+		linkdir=linkdir,
+		webpath=webpath,
+		tempdir=tempdir, 
+		queue=default_queue,
+		conda_env=conda_env, 
+		modules=modules,
+		wait_for=[sort_mdup_index_jobname],
+	)
+	sample_check_jobname = job.jobname
 
-		job.add_input_file(mdup_bam)
-		out_fns = job.check_sample_identity(mdup_bam)
-		for fn in out_fns:
-			job.add_output_file(fn)
-		job.write_end()
-		if not job.delete_sh:
-			submit_commands.append(job.sge_submit_command())
+	job.add_input_file(mdup_bam)
+	out_fns = job.check_sample_identity(mdup_bam)
+	for fn in out_fns:
+		job.add_output_file(fn)
+	job.write_end()
+	if not job.delete_sh:
+		submit_commands.append(job.sge_submit_command())
 
 	##### Submission script #####
 	# Now we'll make a submission script that submits the jobs with the
