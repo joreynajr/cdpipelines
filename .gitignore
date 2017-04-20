@@ -55,3 +55,8 @@ target/
 
 # Sample Identity Check
 cdpipelines/scripts/sample_check/*.swp
+
+# Notebook checkpoints and swap files. 
+.pversion
+cdpipelines/.atacseq.py.swp
+cdpipelines/.ipynb_checkpoints/
