@@ -115,7 +115,7 @@ class WGS_HLAJobScript(JobScript):
 			f.write(lines)
 		return index
 	
-	def samtools_extract(self, in_bam, regions):
+	def samtools_extract_regions(self, in_bam, regions):
 		"""
 		Extract hits aligning to HLA regions
 		
@@ -142,6 +142,39 @@ class WGS_HLAJobScript(JobScript):
 		#### Samtools version 
 		lines = []
 		cmd = 'samtools view -h -b -@ {} -o {} {} {}'.format(self.threads, extract_bam, in_bam, regions)
+		lines = self._add_execution_date(lines, cmd)
+
+		with open(self.filename, 'a') as f:
+			f.write('\n'.join(lines))
+		return extract_bam
+
+	def samtools_extract_bed(self, in_bam, bed_fn):
+		"""
+		Extract hits aligning to HLA regions
+		
+		Parameters
+		__________
+		in_bam : str
+			Path to input bam file.
+		regions : str
+			Regions that will be extracted as specified by the samtools format. 
+		
+		Returns
+		-------
+		extract_bam : str
+			Path to bam with extractions file.
+	
+		"""		
+		# GRCH37 HLA regions 
+		# Make reads directory for extraction of HLA R1 and R2 fastq files 
+		#### Deprecated Sambamba version has some bug. ####
+		# Version 0.5.9 and 0.6.1 produce output but switching to samtools to be sure
+		# with open(self.filename, 'a') as f:
+			# f.write('sambamba view -h -f bam {} {} -o {} -t {}'.format(bam, hla_regions, extraction, self.threads))
+		extract_bam = os.path.join(self.outdir,'{}_hla.bam'.format(self.sample_name))
+		#### Samtools version 
+		lines = []
+		cmd = 'samtools view -h -b -@ {} -L {} -o {} {}'.format(self.threads, bed_fn, extract_bam, in_bam)
 		lines = self._add_execution_date(lines, cmd)
 
 		with open(self.filename, 'a') as f:
@@ -186,7 +219,7 @@ class WGS_HLAJobScript(JobScript):
 		self,
 		r1_fastq,
 		r2_fastq, 
-		reference='/frazer01/home/joreyna/projects/hla_typing/pipeline/supp/hla_gen_160614.fasta',
+		hla_ref,
 	):  
 		"""
 		Align paired fastq files with bwa. Uses the -a option 
@@ -195,8 +228,8 @@ class WGS_HLAJobScript(JobScript):
 		
 		Parameters
 		__________
-		reference : str
-			Path to reference file.
+		hla_ref : str
+			Path to hla_ref file.
 		r1_fastq : str
 			Path to input r1 fastq file.
 		r2_fastq : str
@@ -212,7 +245,7 @@ class WGS_HLAJobScript(JobScript):
 		lines = []
 		cmd = 'bwa mem -t {} -L 10000 -P -a {} {} {} > {}'.\
 			format(self.threads,
-			reference,
+			hla_ref,
 			r1_fastq,
 			r2_fastq,
 			sam)
@@ -251,11 +284,12 @@ class WGS_HLAJobScript(JobScript):
 		new_phlat_fn = phlat_fn.replace('_HLA','').replace('sum', 'phlat')
 
 		lines = []
-		cmd = 'python -O {} -1 {} -2 {} -index {} -b2url {} -orientation "--fr" -tag {} -e {} -o {}'.\
+		cmd = 'python -O {} -1 {} -2 {} -index {} -p {} -b2url {} -orientation "--fr" -tag {} -e {} -o {}'.\
 			format(os.path.join(phlat_dir, 'dist/PHLAT.py'),
 			r1_fastq,
 			r2_fastq,
 			os.path.join(phlat_dir, 'b2folder'),
+			self.threads, 
 			bowtie2, self.sample_name, phlat_dir, self.outdir)
 		lines = self._add_execution_date(lines, cmd)
 		lines.append('mv {} {}'.format(phlat_fn, new_phlat_fn))
@@ -267,7 +301,7 @@ class WGS_HLAJobScript(JobScript):
 	def vbseq_typing(
 		self,
 		sam,
-		hla_ref='/frazer01/home/joreyna/projects/hla_typing/pipeline/supp/hla_gen_160614.fasta'
+		hla_ref,
 	):
 		"""
 		HLA type paired fastq files with HLA-VBSeq.
@@ -296,7 +330,8 @@ class WGS_HLAJobScript(JobScript):
 	def parse_vbseq_results(
 		self,
 		hla,
-		allele_ls = '/frazer01/home/joreyna/projects/hla_typing/pipeline/supp/Allelelist_160614.txt'
+		hla_allele_list, 
+		email=False,
 	):
 		"""
 		Parse results from HLA-VBSeq.
@@ -305,6 +340,8 @@ class WGS_HLAJobScript(JobScript):
 		__________
 		hla : str
 			Path to the vbseq file.
+		hla_allele_list: str 
+			Path to the HLA allele list.
 
 		Returns
 		-------
@@ -314,10 +351,12 @@ class WGS_HLAJobScript(JobScript):
 
 		vbseq_result_fn = os.path.join(self.outdir, '{}.vbseq.avgdp'.format(self.sample_name))		
 		lines = []
-		cmd = 'perl /frazer01/home/joreyna/projects/hla_typing/pipeline/supp/parse_result.pl {} {} > {}'.format(allele_ls, hla, vbseq_result_fn)
+		cmd = 'perl /software/HLA-VBseq_d16.06.14/parse_result.pl {} {} > {}'.format(hla_allele_list, hla, vbseq_result_fn)
 		lines = self._add_execution_date(lines, cmd)
 		with open(self.filename, 'a') as f:
 			f.write('\n'.join(lines))
+			if email == True:
+				f.write('echo Hello Mars! | mail -r joreyna@flh1.ucsd.edu -s "Jobs are complete." joreyna@live.com\n')
 		return vbseq_result_fn  
 	
 		def bash_submit_command(self):
@@ -333,8 +372,12 @@ def pipeline(
 		in_bam,
 		linkdir, 
 		outdir,
+		hla_regions,
+		hla_ref,
+		hla_allele_list,
 		queue = None,
 		webpath = None,
+		email = False,
 	):  
 	"""
 	Make SGE/shell scripts for running the entire HLA pipeline. The defaults
@@ -345,6 +388,7 @@ def pipeline(
 	in_bam : str
 	linkdir : str, 
 	outdir : str,
+	hla_regions; str,
 	bowtie2 : str
 	phlat_dir : str
 	queue : str
@@ -369,8 +413,7 @@ def pipeline(
 	job.add_temp_file(index_bam)
 
 	# Extract HLA Regions 
-	hla_regions = 'chr6:29689117-29699106 chr6:29756731-29767588 chr6:29766192-29772202 chr6:29792756-29800899		 chr6:29793613-29978954 chr6:29855105-29979733 chr6:29892236-29899009 chr6:29907037-29915661		 chr6:30225339-30236728 chr6:30455183-30463982 chr6:31234526-31241863 chr6:31319649-31326989		 chr6:31369356-31385092 chr6:31460658-31480901 chr6:32405619-32414826 chr6:32483154-32559613		 chr6:32518778-32554154 chr6:32544547-32559613 chr6:32603183-32613429 chr6:32625241-32636466		 chr6:32707163-32716664 chr6:32721875-32733330 chr6:32778540-32786825 chr6:32779544-32808599		 chr6:32810986-32823755 chr6:32900406-32910847 chr6:32914391-32922899 chr6:32969960-32979389		 chr6:33030346-33050555 chr6:33041703-33059473'
-	extract_bam = job.samtools_extract(in_bam, hla_regions)
+	extract_bam = job.samtools_extract_bed(in_bam, hla_regions)
 	job.add_output_file(extract_bam)
 
 	# Sort bam by query (aka read name) 
@@ -417,7 +460,7 @@ def pipeline(
 		wait_for=[extract_job])
 	job.add_input_file(fastq_r1)
 	job.add_input_file(fastq_r2)
-	sam = job.bwa_align(fastq_r1, fastq_r2)
+	sam = job.bwa_align(fastq_r1, fastq_r2, hla_ref)
 	pre_align_vbseq = job.jobname
 	if not job.delete_sh:
 		submit_commands.append(job.sge_submit_command())
@@ -435,10 +478,10 @@ def pipeline(
 		wait_for=[pre_align_vbseq])
 	job.add_temp_file(sam)
 	# running VBSeq
-	vbseq = job.vbseq_typing(sam)
+	vbseq = job.vbseq_typing(sam, hla_ref)
 	job.add_temp_file(vbseq)
 	# parsing results
-	vbseq_parsed = job.parse_vbseq_results(vbseq)
+	vbseq_parsed = job.parse_vbseq_results(vbseq, hla_allele_list, email)
 	job.add_output_file(vbseq_parsed)
 	job.write_end()
 	if not job.delete_sh:
