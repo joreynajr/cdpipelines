@@ -351,7 +351,11 @@ class RNAS_HLAJobScript(JobScript):
 		
 		# WRITE out the sequences to filter for them later in the IMGT/HLA RNA bed file
 		with open(hla_alleles, 'w') as f:
-			f.write('\n'.join([x.replace('*', '\*') for x in alleles]))
+			for x in alleles:
+				x = '\<' + x
+				x = x.replace('*', '\*')
+				x = x + '\>'
+				f.write(x + '\n')
 		
 		
 		# GREP for coordinates in the IMGT/HLA RNA bed file which correspond to the sample's allelic sequences 
@@ -604,10 +608,13 @@ def gene_expression_pipeline(
 	now = str(dt.datetime.now())
 	now = now.replace('-', '_').replace(' ', '_').replace(':', '_').replace('.', '_')
 	submit_fn = os.path.join(outdir, 'sh/', '{}_submit_{}.sh'.format(sample_name, now))
-	with open(submit_fn, 'w') as f:
+	if len(submit_commands) > 0:
+		with open(submit_fn, 'w') as f:
 			f.write('#!/bin/bash\n\n')
 			f.write('\n'.join(submit_commands))
-	return submit_fn
+		return submit_fn
+	else:
+		return None
 
 # # Running for RNAS
 def pipeline(
