@@ -357,6 +357,7 @@ class ATACJobScript(JobScript):
 		write_to_outdir=True,
 		web_available=True, 
 		broad=False,
+		paired_end=True,
 	):
 		"""
 		Call peaks with MACS2 for ATAC-seq data. The macs2 executable is assumed
@@ -374,6 +375,8 @@ class ATACJobScript(JobScript):
 		web_available : bool
 			If True, write trackline to self.links_tracklines, make softlink to
 			self.linkdir, and set write_to_outdir = True.
+		paired_end : bool 
+			Boolean for paired end designation. 
 
 		Returns
 		-------
@@ -397,12 +400,18 @@ class ATACJobScript(JobScript):
 		run_type = '--call-summits'
 		if broad:
 			run_type = '--broad'
+		
+		if paired_end:
+			input_type = 'BAMPE'
+		else:
+			input_type = 'BAM'
+
 		lines = ('macs2 callpeak --nomodel --nolambda --keep-dup all \\\n'
-				 '\t{} -f BAMPE -g hs \\\n'
+				 '\t{} -f {} -g hs \\\n'
 				 '\t-t {} \\\n'
 				 '\t-n {} \\\n'
 				 '\t--outdir {}\n\n'.format(
-					 run_type, bam, self.sample_name, dy))
+					 run_type, input_type, bam, self.sample_name, dy))
 		lines += 'macs2 --version\n\n'
 		
 		# Output files.
@@ -725,7 +734,7 @@ def pipeline(
 	bedGraphToBigWig_path : str
 		Path bedGraphToBigWig executable.
 
-	paired_end : str
+	paired_end : bool 
 		Boolean for paired end designation. 
 
 	Returns
@@ -825,7 +834,7 @@ def pipeline(
 		fastqc_html, fastqc_zip = job.fastqc([combined_r1, combined_r2],
 											 fastqc_path)
 	else:
-		fastqc_html, fastqc_zip = job.fastqc([combined_r2],
+		fastqc_html, fastqc_zip = job.fastqc([combined_r1],
 											 fastqc_path)
 
 	[job.add_output_file(x) for x in fastqc_html + fastqc_zip]
@@ -1217,6 +1226,7 @@ def pipeline(
 		tlen_bam,
 		web_available=True, 
 		broad=False,
+		paired_end=paired_end,
 	)
 	job.add_output_file(excel)
 	outdir_narrow_peak = job.add_output_file(narrow_peak)
@@ -1860,6 +1870,7 @@ def merge_samples(
 		merged_bam,
 		web_available=True, 
 		broad=False,
+		paired_end=paired_end,
 	)
 	job.add_output_file(excel)
 	outdir_narrow_peak = job.add_output_file(narrow_peak)
