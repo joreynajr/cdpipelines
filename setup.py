@@ -33,7 +33,7 @@ setup(
     license = 'MIT',
     keywords = ['bioinformatics'],
     url = 'https://github.com/joreyna/cdpipelines',
-    download_url = 'https://github.com/cdeboever3/cdpipelines/tarball/0.0.14',
+    download_url = 'https://github.com/joreyna/cdpipelines/tree/pm_integration/tarball/0.0.14',
     include_package_data=True,
     long_description=long_description,
     classifiers=[
