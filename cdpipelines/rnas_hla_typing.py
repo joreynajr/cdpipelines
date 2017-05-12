@@ -483,6 +483,7 @@ def gene_expression_pipeline(
 	linkdir = None,
 	webpath = None, 
 	queue = None, 
+	generalized_rsem_reference=None,
 ):
 	"""
 	Make SGE/shell scripts for running the entire RNA-seq pipeline. The defaults
@@ -562,20 +563,20 @@ def gene_expression_pipeline(
 	rsem_prepare_references_jobname = job.jobname 
 
 	# RUN rsem-prepare-references
-	rsem_reference = job.rsem_prepare_references(bowtie2, gencode_reference)
-	job.add_output_file(rsem_reference)
+	personalized_rsem_reference = rsem_reference = job.rsem_prepare_references(bowtie2, gencode_reference)
+	job.add_output_file(personalized_rsem_reference)
 
 	if not job.delete_sh:
 		submit_commands.append(job.sge_submit_command())
 
-	##### Job 3: Combine fastqs and calculate gene expression using RSEM. #####
+	##### Job 3: Combine fastqs. #####
 	job = RNAS_HLAJobScript(
 		sample_name=sample_name,
-		job_suffix='rsem_calculate_expression',
+		job_suffix='combine_fastq',
 		linkdir=linkdir,
-		outdir= os.path.join(outdir, 'rsem_calculate_expression'),
-		threads=8,
-		memory=24,
+		outdir= os.path.join(outdir, 'combine_fastq'),
+		threads=1,
+		memory=2,
 		queue=queue,
 		conda_env='hla',
 		modules='cardips',
@@ -597,8 +598,50 @@ def gene_expression_pipeline(
 	with open(job.filename, "a") as f:
 			f.write('\nwait\n\n')
 
+	combine_fastq_jobname = job.jobname
+	if not job.delete_sh:
+		submit_commands.append(job.sge_submit_command())
+
+	##### Job 4: Calculate gene expression for validation using RSEM. #####
+	job = RNAS_HLAJobScript(
+		sample_name=sample_name,
+		job_suffix='rsem_calculate_expression',
+		linkdir=linkdir,
+		outdir= os.path.join(outdir, 'rsem_calculate_expression'),
+		threads=8,
+		memory=24,
+		queue=queue,
+		conda_env='hla',
+		modules='cardips',
+		wait_for=[combine_fastq_jobname]
+	)
+
 	# RUN rsem-calculate-expression
-	rsem_gene_expression = job.rsem_calculate_expression(bowtie2, combined_r1, combined_r2, rsem_reference)
+	rsem_gene_expression = job.rsem_calculate_expression(bowtie2, combined_r1, combined_r2, personalized_rsem_reference)
+	job.add_output_file(rsem_reference)
+
+	if not job.delete_sh:
+		submit_commands.append(job.sge_submit_command())
+
+	##### Job 5: Calculate gene expression for validation using RSEM. #####
+	job = RNAS_HLAJobScript(
+		sample_name=sample_name,
+		job_suffix='rsem_calculate_expression_validation',
+		linkdir=linkdir,
+		outdir= os.path.join(outdir, 'rsem_calculate_expression_validation'),
+		threads=8,
+		memory=24,
+		queue=queue,
+		conda_env='hla',
+		modules='cardips',
+		wait_for=[combine_fastq_jobname]
+	)
+
+	for fq in r1_fastqs + r2_fastqs:
+		job.add_input_file(fq)
+
+	# RUN rsem-calculate-expression
+	rsem_gene_expression = job.rsem_calculate_expression(bowtie2, combined_r1, combined_r2, generalized_rsem_reference)
 	job.add_output_file(rsem_reference)
 
 	if not job.delete_sh:
@@ -782,13 +825,16 @@ def pipeline(
 	job.write_end()
 	if not job.delete_sh:
 		submit_commands.append(job.sge_submit_command())
-		
+
 	##### Submission script #####
 	now = str(dt.datetime.now())
 	now = now.replace('-', '_').replace(' ', '_').replace(':', '_').replace('.', '_')
 	submit_fn = os.path.join(outdir, 'sh/', '{}_submit_{}.sh'.format(sample_name, now))
-	with open(submit_fn, 'w') as f:
+	if len(submit_commands) > 0:
+		with open(submit_fn, 'w') as f:
 			f.write('#!/bin/bash\n\n')
-			f.write('\n'.join(submit_commands))   
-	return submit_fn
+			f.write('\n'.join(submit_commands))
+		return submit_fn
+	else:
+		return None
 
