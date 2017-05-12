@@ -691,10 +691,13 @@ class JobScript:
 		out = os.path.join(self.tempdir,
 						   '{}_featureCounts.tsv'.format(root))
 		out_summary = os.path.join(self.tempdir, '{}.summary'.format(out))
-		lines = '{} -p -T {} '.format(featureCounts_path, self.threads)
-		if both:
+		if paired_end:
+			lines = '{} -p -T {} '.format(featureCounts_path, self.threads)
+		else:
+			lines = '{} -T {} '.format(featureCounts_path, self.threads)
+		if both and paired_end:
 			lines += '-B '
-		if strand_specific != 0:
+		if strand_specific != 0 and paired_end:
 			lines += '-s {} '.format(strand_specific)
 		if sort == False:
 			lines += '--donotsort '
