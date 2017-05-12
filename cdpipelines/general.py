@@ -184,11 +184,13 @@ class JobScript:
 			f.write('#$ -S /bin/bash\n')
 			f.write('#$ -o {}\n'.format(self.out))
 			f.write('#$ -e {}\n\n'.format(self.err))
+			if self.conda_env:
+				f.write('source activate {}\n\n'.format(self.conda_env))
+
 			if self.modules:
 				for module in self.modules:
 					f.write('module load {}\n\n'.format(module))
-			if self.conda_env:
-				f.write('source activate {}\n\n'.format(self.conda_env))
+
 			if self.tempdir:
 				f.write('mkdir -p {}\n'.format(self.tempdir))
 				f.write('cd {}\n\n'.format(self.tempdir))
