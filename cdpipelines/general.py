@@ -635,6 +635,7 @@ class JobScript:
 		self,
 		features,
 		bam,
+        paired_end,
 		sort=True,
 		filetype='gtf',
 		both=False,

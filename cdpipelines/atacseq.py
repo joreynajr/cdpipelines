@@ -446,6 +446,7 @@ class ATACJobScript(JobScript):
 			with open(self.links_tracklines, "a") as f:
 				f.write(tf_lines)
 		return excel, out1, out2
+
 	def _get_data_atacs_cell_type(self, data_atacs_id):
 		"""
 		Determine the celltype for the data_atacs_id sample. JR made. 
@@ -871,9 +872,6 @@ def pipeline(
 	)
 	job.add_output_file(mito_counts)
 
-
-
-	#INCISION SPECIAL 1 start 
 	# Filter out non-uniquely mapped and mitochondrial reads.
 	filtered_bam = job.filter_multi_mt_blacklist_reads(
 		bam=star_bam,
@@ -883,15 +881,6 @@ def pipeline(
 		paired_end = paired_end
 	)
 	job.add_temp_file(filtered_bam)
-	#INCISION SPECIAL 1 end 
-
-
-
-
-
-
-
-
 
 	# Coordinate sort.
 	coord_sorted_bam = job.sambamba_sort(
@@ -933,11 +922,6 @@ def pipeline(
 		f.write(t_lines)
 		f.write(url + '\n')
 
-
-
-
-
-	# INCISION 1 start 
 	# Filter out reads with fragment size greater than 140.
 	tlen_bam = job.filter_tlen(
 		rmdup_bam,
@@ -949,11 +933,6 @@ def pipeline(
 	# Index sorted bam file.
 	tlen_bam_index = job.sambamba_index(tlen_bam, sambamba_path)
 	outdir_tlen_bam_index = job.add_output_file(tlen_bam_index)
-	# INCISION 1 end 
-
-
-
-
 
 	# Query name sort.
 	query_sorted_bam = job.sambamba_sort(
@@ -965,13 +944,6 @@ def pipeline(
 	)
 	outdir_query_sorted_bam = job.add_output_file(query_sorted_bam)
 
-
-
-
-
-
-
-	# INCISION 2 start 
 	# Query name sort tlen 140 bam.
 	tlen_140_query_sorted_bam = job.sambamba_sort(
 		tlen_bam, 
@@ -996,19 +968,6 @@ def pipeline(
 	with open(job.links_tracklines, "a") as f:
 		f.write(t_lines)
 		f.write(url + '\n')
-	# INCISION 2 end 
-
-
-
-
-
-
-
-
-
-
-
-
 	job.write_end()
 	if not job.delete_sh:
 		submit_commands.append(job.sge_submit_command())
@@ -1100,19 +1059,7 @@ def pipeline(
 		
 	# Input files.
 	rmdup_bam = job.add_input_file(outdir_rmdup_bam)
-	
-
-
-
-
-	# INCISION 3 start 
 	tlen_bam = job.add_input_file(outdir_tlen_bam)
-	# INCISION 3 end 
-
-
-
-
-
 
 	# Make bigwig.
 	bg = job.bedgraph_from_bam(
@@ -1143,12 +1090,6 @@ def pipeline(
 	)
 	job.add_output_file(scaled_bw)
 
-
-
-
-
-
-	# INCISION 4 start 
 	# Make bigwig for tlen filtered bam.
 	tlen_bg = job.bedgraph_from_bam(
 		tlen_bam, 
@@ -1181,15 +1122,6 @@ def pipeline(
 		bedtools_path=bedtools_path,
 	)
 	job.add_output_file(tlen_scaled_bw)
-	# INCISION 5 end 
-
-
-
-
-
-
-
-
 
 	job.write_end()
 	if not job.delete_sh:
@@ -1212,12 +1144,6 @@ def pipeline(
 	)
 	macs2_jobname = job.jobname
 
-
-
-
-
-
-	# INCISION 6 start 
 	# Input files.
 	tlen_bam = job.add_input_file(outdir_tlen_bam)
 
@@ -1231,13 +1157,6 @@ def pipeline(
 	job.add_output_file(excel)
 	outdir_narrow_peak = job.add_output_file(narrow_peak)
 	job.add_output_file(summits)
-	# INCISION 6 end 
-
-
-
-
-
-
 
 	# Motif analysis.
 	homer_outdir = job.homer_motif_analysis(
@@ -1270,26 +1189,14 @@ def pipeline(
 
 	# Input files.
 	query_sorted_bam = job.add_input_file(outdir_query_sorted_bam)
-
-
-
-
-
-
-	# INCISION 7 start 
 	tlen_140_query_sorted_bam = job.add_input_file(outdir_tlen_140_query_sorted_bam)
-	# INCISION 7 end 
-
-
-
-
-
 	narrow_peak = job.add_input_file(outdir_narrow_peak)
 
 	# Run featureCounts.
 	counts, counts_summary = job.featureCounts_count(
 		narrow_peak,
 		query_sorted_bam,
+        paired_end,
 		sort=False,
 		filetype='bed',
 		featureCounts_path=featureCounts_path,
@@ -1297,34 +1204,16 @@ def pipeline(
 	job.add_output_file(counts)
 	job.add_output_file(counts_summary)
 
-
-
-
-
-
-	# INCISION 8 start 
 	counts_tlen_140, counts_summary_tlen_140 = job.featureCounts_count(
 		narrow_peak,
 		tlen_140_query_sorted_bam,
+        paired_end,
 		sort=False,
 		filetype='bed',
 		featureCounts_path=featureCounts_path,
 	)
 	job.add_output_file(counts_tlen_140)
 	job.add_output_file(counts_summary_tlen_140)
-	# INCISION 8 end 
-
-
-
-
-
-
-
-
-
-
-
-
 	job.write_end()
 	if not job.delete_sh:
 		submit_commands.append(job.sge_submit_command())
@@ -1348,26 +1237,14 @@ def pipeline(
 		
 		# Input files.
 		query_sorted_bam = job.add_input_file(outdir_query_sorted_bam)
-
-
-
-
-
-		# INCISION 9 start 
 		tlen_140_query_sorted_bam = job.add_input_file(outdir_tlen_140_query_sorted_bam)
-		# INCISION 9 end 
-
-
-
-
-
-
 		
 		if promoter_bed:
 			# Run featureCounts for transcript promoters.
 			promoter_counts, promoter_counts_summary = job.featureCounts_count(
 				promoter_bed,
 				query_sorted_bam,
+                paired_end,
 				sort=False,
 				filetype='bed',
 				featureCounts_path=featureCounts_path,
@@ -1376,15 +1253,10 @@ def pipeline(
 			job.add_output_file(promoter_counts)
 			job.add_output_file(promoter_counts_summary)
 
-
-
-
-
-
-			# INCISION 10 start 
 			promoter_counts_tlen_140, promoter_counts_summary_tlen_140 = job.featureCounts_count(
 				promoter_bed,
 				tlen_140_query_sorted_bam,
+                paired_end,
 				sort=False,
 				filetype='bed',
 				featureCounts_path=featureCounts_path,
@@ -1392,15 +1264,6 @@ def pipeline(
 			)
 			job.add_output_file(promoter_counts_tlen_140)
 			job.add_output_file(promoter_counts_summary_tlen_140)
-			# INCISION 10 end 
-
-
-
-
-
-
-
-
 
 		if merged_promoter_bed:
 			# Run featureCounts for merged promoters.
@@ -1408,6 +1271,7 @@ def pipeline(
 					job.featureCounts_count(
 						merged_promoter_bed,
 						query_sorted_bam,
+                        paired_end,
 						sort=False,
 						filetype='bed',
 						featureCounts_path=featureCounts_path,
@@ -1416,29 +1280,16 @@ def pipeline(
 			job.add_output_file(merged_promoter_counts)
 			job.add_output_file(merged_promoter_counts_summary)
 
-
-
-
-
-
-			# INCISION 11 start 
 			merged_promoter_counts_tlen_140, merged_promoter_counts_summary_tlen_140 = \
 					job.featureCounts_count(
 						merged_promoter_bed,
 						tlen_140_query_sorted_bam,
+                        paired_end,
 						sort=False,
 						filetype='bed',
 						featureCounts_path=featureCounts_path,
 						root='{}_tlen_leq_140_merged_promoters'.format(job.sample_name),
 					)
-			# INCISION 11 end 
-
-
-
-
-
-
-
 			job.add_output_file(merged_promoter_counts)
 			job.add_output_file(merged_promoter_counts_summary)
 
@@ -1448,6 +1299,7 @@ def pipeline(
 					job.featureCounts_count(
 						gene_promoter_bed,
 						query_sorted_bam,
+                        paired_end,
 						sort=False,
 						filetype='bed',
 						featureCounts_path=featureCounts_path,
@@ -1455,19 +1307,11 @@ def pipeline(
 					)
 			job.add_output_file(gene_promoter_counts)
 			job.add_output_file(gene_promoter_counts_summary)
-
-
-
-
-
-
-
-
-			# INCISION 12 start 
 			gene_promoter_counts_tlen_140, gene_promoter_counts_summary_tlen_140 = \
 					job.featureCounts_count(
 						gene_promoter_bed,
 						tlen_140_query_sorted_bam,
+                        paired_end,
 						sort=False,
 						filetype='bed',
 						featureCounts_path=featureCounts_path,
@@ -1475,10 +1319,6 @@ def pipeline(
 					)
 			job.add_output_file(gene_promoter_counts_tlen_140)
 			job.add_output_file(gene_promoter_counts_summary_tlen_140)
-			# INCISION 12 end 
-
-
-
 
 
 		job.write_end()
@@ -1631,6 +1471,13 @@ def peak_qc_pipeline(
 	job.write_end()
 
 	return os.path.join(outdir, 'sh/', '{}_peak_qc.sh'.format(sample_name))
+
+
+
+
+
+
+
 
 def merge_samples(
 	bams, 
@@ -2042,6 +1889,7 @@ def peak_analysis(
 	counts, counts_summary = job.featureCounts_count(
 		bed,
 		bam,
+        paired_end,
 		filetype='bed',
 		featureCounts_path=featureCounts_path,
 	)

@@ -175,7 +175,7 @@ def QC_function(dataID,region_coverage_path,var_coverage_path,cellType,NumInputR
 	elif cellType=="islet":
 		subp2=subprocess.Popen(["module load bedtools; bedtools coverage -sorted -b "+bamFile+" -a /projects/T2D/pipeline/ATACseq/reference_files/islet_active_elements.bed > "+region_coverage_path],shell=True)
 	subp2.wait()
-	activeReads=sum([int(line.strip().split()[4]) for line in open(region_coverage_path,"r")])
+	activeReads=sum([int(line.strip().split()[3]) for line in open(region_coverage_path,"r")])
 	fractionActiveReads=float(activeReads)/NumInputReads
 
 	logging.info("Finding Variant Coverage")
