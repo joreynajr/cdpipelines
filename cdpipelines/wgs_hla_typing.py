@@ -250,7 +250,7 @@ class WGS_HLAJobScript(JobScript):
             f.write('\n'.join(lines))
         return sam     
 
-    def samtools_coverage(self, 
+    def bedtools_coverage(self, 
         bam, 
         bed, 
         bedtools_path='bedtools',
@@ -442,7 +442,7 @@ def pipeline(
     #job.add_temp_file(index_bam)
 
     # Calculating the coverage at the HLA region.
-    coverage = job.samtools_coverage(in_bam, mhc_region)
+    coverage = job.bedtools_coverage(in_bam, mhc_region)
     job.add_output_file(coverage)
 
     # Extract HLA Regions 
