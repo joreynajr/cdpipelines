@@ -656,6 +656,7 @@ def pipeline(
 	featureCounts_path='featureCounts',
 	fastq_dump_path='fastq-dump',
 	scale_down=False,
+    paired_end=True,
 ):
 	"""
 	Make SGE/shell scripts for running the entire RNA-seq pipeline. The defaults
@@ -809,6 +810,9 @@ def pipeline(
 	dexseq_count_path : str
 		Path to dexseq_count.py script. If not provided, rpy2 will look for the
 		path in R.
+    
+    paired_end: bool
+        Whether the data is paired-end sequenced. 
 	
 	Returns
 	-------
@@ -1240,9 +1244,11 @@ def pipeline(
 		ss = 2
 	else:
 		ss = 0
+    
 	gene_counts, gene_count_stats = job.featureCounts_count(
 		gene_gtf,
 		mdup_bam,
+        paired_end, 
 		both=True,
 		strand_specific=ss,
 		featureCounts_path=featureCounts_path,

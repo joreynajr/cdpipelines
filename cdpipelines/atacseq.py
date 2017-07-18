@@ -1472,13 +1472,6 @@ def peak_qc_pipeline(
 
 	return os.path.join(outdir, 'sh/', '{}_peak_qc.sh'.format(sample_name))
 
-
-
-
-
-
-
-
 def merge_samples(
 	bams, 
 	outdir, 
