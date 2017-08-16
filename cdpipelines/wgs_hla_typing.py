@@ -73,20 +73,11 @@ def delete_script(
 
 class WGS_HLAJobScript(JobScript):
     
-    @classmethod 
-    def _add_execution_date(self, cmd):
-        lines = []
-        lines.append('date 1>&2')
-        lines.append('cmd="{}"'.format(cmd))
-        lines.append('echo Executing: $cmd 1>&2')
-        lines.append('eval $cmd')
-        lines.append('date 1>&2\n\n')
-        return lines 
-    
     def sambamba_index(
         self,
         in_bam, 
         sambamba_path='sambamba',
+        suffix=None, 
     ):
         """
         Index bam file using sambamba.
@@ -105,7 +96,6 @@ class WGS_HLAJobScript(JobScript):
             Path to output index file.
     
         """
-        
         index = os.path.join(in_bam + '.bai')
         cmd = '{} index -t {} \\\n\t{} \\\n\t{}'.format(
             sambamba_path, self.threads, in_bam, index)
@@ -115,7 +105,39 @@ class WGS_HLAJobScript(JobScript):
             f.write(lines)
         return index
     
-    def samtools_extract_regions(self, in_bam, regions):
+    #    def samtools_extract_regions(self, in_bam, regions):
+    #        
+    #        Extract hits aligning to HLA regions
+    #        
+    #        Parameters
+    #        __________
+    #        in_bam : str
+    #            Path to input bam file.
+    #        regions : str
+    #            Regions that will be extracted as specified by the samtools format. 
+    #        
+    #        Returns
+    #        -------
+    #        mhc_bam : str
+    #            Path to bam with extractions file.
+    #    
+    #                
+    #        # GRCH37 HLA regions 
+    #        # Make reads directory for extraction of HLA R1 and R2 fastq files 
+    #        #### Deprecated Sambamba version has some bug. ####
+    #        # Version 0.5.9 and 0.6.1 produce output but switching to samtools to be sure
+    #        # with open(self.filename, 'a') as f:
+    #            # f.write('sambamba view -h -f bam {} {} -o {} -t {}'.format(bam, hla_regions, extraction, self.threads))
+    #        mhc_bam = os.path.join(self.outdir,'{}_hla.bam'.format(self.sample_name))
+    #        #### Samtools version 
+    #        cmd = 'samtools view -h -b -@ {} -o {} {} {}'.format(self.threads, mhc_bam, in_bam, regions)
+    #        lines = self._add_execution_date(cmd)
+    #
+    #        with open(self.filename, 'a') as f:
+    #            f.write('\n'.join(lines))
+    #        return out_bam
+
+    def samtools_extract_bed(self, in_bam, bed_fn, loci='extract'):
         """
         Extract hits aligning to HLA regions
         
@@ -128,7 +150,7 @@ class WGS_HLAJobScript(JobScript):
         
         Returns
         -------
-        extract_bam : str
+        mhc_bam : str
             Path to bam with extractions file.
     
         """        
@@ -138,46 +160,14 @@ class WGS_HLAJobScript(JobScript):
         # Version 0.5.9 and 0.6.1 produce output but switching to samtools to be sure
         # with open(self.filename, 'a') as f:
             # f.write('sambamba view -h -f bam {} {} -o {} -t {}'.format(bam, hla_regions, extraction, self.threads))
-        extract_bam = os.path.join(self.outdir,'{}_hla.bam'.format(self.sample_name))
+        out_bam = os.path.join(self.outdir,'{}_{}.bam'.format(self.sample_name, loci))
         #### Samtools version 
-        cmd = 'samtools view -h -b -@ {} -o {} {} {}'.format(self.threads, extract_bam, in_bam, regions)
+        cmd = 'samtools view -h -b -@ {} -L {} -o {} {}'.format(self.threads, bed_fn, out_bam, in_bam)
         lines = self._add_execution_date(cmd)
 
         with open(self.filename, 'a') as f:
             f.write('\n'.join(lines))
-        return extract_bam
-
-    def samtools_extract_bed(self, in_bam, bed_fn):
-        """
-        Extract hits aligning to HLA regions
-        
-        Parameters
-        __________
-        in_bam : str
-            Path to input bam file.
-        regions : str
-            Regions that will be extracted as specified by the samtools format. 
-        
-        Returns
-        -------
-        extract_bam : str
-            Path to bam with extractions file.
-    
-        """        
-        # GRCH37 HLA regions 
-        # Make reads directory for extraction of HLA R1 and R2 fastq files 
-        #### Deprecated Sambamba version has some bug. ####
-        # Version 0.5.9 and 0.6.1 produce output but switching to samtools to be sure
-        # with open(self.filename, 'a') as f:
-            # f.write('sambamba view -h -f bam {} {} -o {} -t {}'.format(bam, hla_regions, extraction, self.threads))
-        extract_bam = os.path.join(self.outdir,'{}_hla.bam'.format(self.sample_name))
-        #### Samtools version 
-        cmd = 'samtools view -h -b -@ {} -L {} -o {} {}'.format(self.threads, bed_fn, extract_bam, in_bam)
-        lines = self._add_execution_date(cmd)
-
-        with open(self.filename, 'a') as f:
-            f.write('\n'.join(lines))
-        return extract_bam
+        return out_bam
     
     def bedtools_bamtofastq(self, in_bam, paired=False):
         """
@@ -211,17 +201,71 @@ class WGS_HLAJobScript(JobScript):
             with open(self.filename, 'a') as f:
                 f.write('\n'.join(lines))
             return (r1_fastq,)
+
+    def bwa_map_to_allele(
+        self,
+        allele_ref,
+        r1_fastq,
+        r2_fastq, 
+        allele_name, 
+        stringent=False,
+    ):  
+        """
+        Aligning paired end data to specific allele reference sequences using bwa.  
+        
+        - bwa P is used for paired-end data. 
+        - samtools -F 4 is used to extract mapped reads only. 
+        
+        
+        Parameters
+        __________
+        hla_ref : str
+            Path to hla_ref file.
+        r1_fastq : str
+            Path to input r1 fastq file.
+        r2_fastq : str
+            Path to input r2 fastq file.
+            Path to bowtie2.
+        
+        Returns
+        -------
+        out_bam : str
+            Path to bam file.
+        """         
+        out_bam = os.path.join(self.outdir, '{}_{}.bam'.format(self.sample_name, allele_name))
+
+        if stringent: 
+            cmd = 'bwa mem -P -B 40 -O 60 -E 10 -L 10000 -t {} {} {} {} | samtools view -F 4 -b - > {}'.\
+                format(self.threads,
+                allele_ref,
+                r1_fastq,
+                r2_fastq,
+                out_bam)
+        else: 
+            cmd = 'bwa mem -P -L 10000 -t {} {} {} {} | samtools view -F 4 -b - > {}'.\
+                format(self.threads,
+                allele_ref,
+                r1_fastq,
+                r2_fastq,
+                out_bam)
+
+        lines = self._add_execution_date(cmd)
+        with open(self.filename, 'a') as f:
+            f.write('\n'.join(lines))
+        return out_bam     
     
-    def bwa_align(
+    def bwa_multi_map(
         self,
         r1_fastq,
         r2_fastq, 
         hla_ref,
     ):  
         """
-        Align paired fastq files with bwa. Uses the -a option 
+        Aligning paired end data multiples times using bwa. The -a option 
         which produces all the alignments, not just the primary 
         alignment.
+
+        -L 10000 is used to avoid clipping 
         
         Parameters
         __________
@@ -238,17 +282,17 @@ class WGS_HLAJobScript(JobScript):
         sam : str
             Path to phlat sum file.
         """         
-        sam = os.path.join(self.outdir, '{}_bwa.sam'.format(self.sample_name))
-        cmd = 'bwa mem -t {} -L 10000 -P -a {} {} {} > {}'.\
+        out_bam = os.path.join(self.outdir, '{}_hla_db_multi_mapped.bam'.format(self.sample_name))
+        cmd = 'bwa mem -t {} -L 10000 -P -a {} {} {} | samtools view -b - > {}'.\
             format(self.threads,
             hla_ref,
             r1_fastq,
             r2_fastq,
-            sam)
+            out_bam)
         lines = self._add_execution_date(cmd)
         with open(self.filename, 'a') as f:
             f.write('\n'.join(lines))
-        return sam     
+        return out_bam     
 
     def bedtools_coverage(self, 
         bam, 
@@ -284,6 +328,82 @@ class WGS_HLAJobScript(JobScript):
         with open(self.filename, "a") as f:
             f.write('\n'.join(lines))
         return coverage  
+
+    def samtools_depth(self, 
+        bam, 
+        bed, 
+        bedtools_path='samtools',
+    ):
+        """
+        Calculate the depths at the MHC and surrounding region.
+    
+        Parameters
+        ----------
+        bam : str
+            Bam file to calculate coverage for.
+
+        bed : str
+            Bed file to filter sites on the MHC region and 10 random MHC regions.
+    
+        bedtools_path : str
+            Path to bedtools. If bedtools_path == 'bedtools', it is assumed that
+            the hg19 human.hg19.genome file from bedtools is also in your path.
+
+        Returns
+        -------
+        coverage : str
+            Path to output bedgraph file.
+    
+        """
+
+        coverage = os.path.join(self.tempdir, '{}_mhc_and_surrounding.coverage'.format(self.sample_name))
+        cmd = '{} depth -b {} {} > {}'.format(bedtools_path, bed, bam, coverage)
+
+        lines = self._add_execution_date(cmd)
+        with open(self.filename, "a") as f:
+            f.write('\n'.join(lines))
+        return coverage  
+
+    def samtools_mpileup(self, 
+        sorted_bam, 
+        allele_fasta,
+        allele_bed, 
+        samtools_path='samtools',
+        suffix=None,
+    ):
+        """
+        Calculate the depths at the MHC and surrounding region.
+    
+        Parameters
+        ----------
+        bam : str
+            Bam file to calculate coverage for.
+
+        bed : str
+            Bed file to filter sites on the MHC region and 10 random MHC regions.
+    
+        samtools_path : str
+            Path to bedtools. If bedtools_path == 'bedtools', it is assumed that
+            the hg19 human.hg19.genome file from bedtools is also in your path.
+
+        Returns
+        -------
+        coverage : str
+            Path to output bedgraph file.
+    
+        """
+        if suffix:
+            mpileup = os.path.join(self.outdir, '{}_{}.mpileup'.format(self.sample_name, suffix))
+
+        else:
+            mpileup = os.path.join(self.outdir, '{}.mpileup'.format(self.sample_name))
+
+        cmd = '{} mpileup -A -a -f {} --positions {} -o {} {}'.format(samtools_path, allele_fasta, allele_bed, mpileup, sorted_bam)
+
+        lines = self._add_execution_date(cmd)
+        with open(self.filename, "a") as f:
+            f.write('\n'.join(lines))
+        return mpileup  
 
 
     def phlat_typing(
@@ -350,7 +470,7 @@ class WGS_HLAJobScript(JobScript):
         """
         
         vbseq_fn = os.path.join(self.outdir, '{}.vbseq'.format(self.sample_name))        
-        cmd = 'java -Xmx27G -jar $HLA_VBSeq {} {} {} --alpha_zero 0.01 --is_paired'.format(hla_ref, sam, vbseq_fn)
+        cmd = 'java -Xmx2G -jar $HLA_VBSeq {} {} {} --alpha_zero 0.01 --is_paired'.format(hla_ref, sam, vbseq_fn)
         lines = self._add_execution_date(cmd)
         with open(self.filename, 'a') as f:
             f.write('\n'.join(lines))
@@ -361,6 +481,7 @@ class WGS_HLAJobScript(JobScript):
         hla,
         hla_allele_list, 
         email=False,
+        hla_vbseq_parse_results_path='/repos/cardips-pipelines/HLA_Typing/sources/parse_result.pl',
     ):
         """
         Parse results from HLA-VBSeq.
@@ -379,7 +500,7 @@ class WGS_HLAJobScript(JobScript):
         """
 
         vbseq_result_fn = os.path.join(self.outdir, '{}.vbseq.avgdp'.format(self.sample_name))        
-        cmd = 'perl /software/HLA-VBseq_d16.06.14/parse_result.pl {} {} > {}'.format(hla_allele_list, hla, vbseq_result_fn)
+        cmd = 'perl {} {} {} > {}'.format(hla_vbseq_parse_results_path, hla_allele_list, hla, vbseq_result_fn)
         lines = self._add_execution_date(cmd)
         with open(self.filename, 'a') as f:
             f.write('\n'.join(lines))
@@ -387,12 +508,12 @@ class WGS_HLAJobScript(JobScript):
                 f.write('echo Hello Mars! | mail -r joreyna@flh1.ucsd.edu -s "Jobs are complete." joreyna@live.com\n')
         return vbseq_result_fn  
     
-        def bash_submit_command(self):
-            """Get command to submit script."""
-            if self.wait_for:
-                return 'bash {} wait'.format(self.filename)
-            else:
-                return 'bash {}'.format(self.filename)
+    def bash_submit_command(self):
+        """Get command to submit script."""
+        if self.wait_for:
+            return 'bash {} wait'.format(self.filename)
+        else:
+            return 'bash {}'.format(self.filename)
 
 
 def pipeline(
@@ -400,8 +521,8 @@ def pipeline(
         in_bam,
         linkdir, 
         outdir,
-        mhc_region,
-        hla_regions,
+        hla_regions_bed,
+        coverage_bed,
         hla_ref,
         hla_allele_list,
         queue = None,
@@ -417,8 +538,8 @@ def pipeline(
     in_bam : str
     linkdir : str, 
     outdir : str,
-    mhc_region: str,
-    hla_regions: str,
+    hla_regions_bed: str,
+    coverage_bed: str,
     bowtie2 : str
     phlat_dir : str
     queue : str
@@ -427,7 +548,7 @@ def pipeline(
     
     submit_commands = [] 
 
-    #### Job #1: Extracting HLA Regions into R1 and R2 fastq's ####
+    #### Job #1: Extracting alignments in the MHC loci and surrounding region into an MHC BAM file. ####
     job = WGS_HLAJobScript(sample_name=sample_name,
         job_suffix='extract_mhc_data',
         threads=8,
@@ -436,36 +557,102 @@ def pipeline(
         outdir=os.path.join(outdir, 'reads'),
         queue=queue,
         conda_env='hla',
-        modules='sambamba/0.6.1,samtools/1.2,bedtools/2.25.0')
+        modules='samtools/1.2')
+    extract_mhc_job = job.jobname
     job.add_input_file(in_bam)
-    index_bam = job.sambamba_index(in_bam)
-    #job.add_temp_file(index_bam)
+    mhc_bam = job.samtools_extract_bed(in_bam, coverage_bed, loci='mhc')
+    job.add_output_file(mhc_bam)
+    job.write_end()
+    if not job.delete_sh:
+        submit_commands.append(job.sge_submit_command())
 
-    # Calculating the coverage at the HLA region.
-    coverage = job.bedtools_coverage(in_bam, mhc_region)
-    job.add_output_file(coverage)
+    #### Job #2: Calculating depth for the MHC loci and surroudng region using the MHC BAM. ####
+    job = WGS_HLAJobScript(sample_name=sample_name,
+        job_suffix='calculate_depth',
+        threads=1,
+        memory=4,
+        linkdir=os.path.join(linkdir),
+        outdir=os.path.join(outdir, 'reads'),
+        queue=queue,
+        conda_env='hla',
+        modules='samtools/1.2', 
+        wait_for=[extract_mhc_job])
+    depth_job = job.jobname
+    job.add_input_file(mhc_bam)
+    depth = job.samtools_depth(mhc_bam, coverage_bed)
+    job.add_output_file(depth)
+    job.write_end()
+    if not job.delete_sh:
+        submit_commands.append(job.sge_submit_command())
 
-    # Extract HLA Regions 
-    extract_bam = job.samtools_extract_bed(in_bam, hla_regions)
-    job.add_output_file(extract_bam)
+    #### Job #3: Extracting alignments in the HLA loci from the MHC BAM. ####
+    job = WGS_HLAJobScript(sample_name=sample_name,
+        job_suffix='extract_hla_data',
+        threads=8,
+        memory=32,
+        linkdir=os.path.join(linkdir),
+        outdir=os.path.join(outdir, 'reads'),
+        queue=queue,
+        conda_env='hla',
+        modules='samtools/1.2',
+        wait_for=[extract_mhc_job])
+    extract_hla_job = job.jobname
+    job.add_input_file(mhc_bam)
+    hla_bam = job.samtools_extract_bed(mhc_bam, hla_regions_bed, loci='hla')
+    job.add_output_file(hla_bam)
+    job.write_end()
+    if not job.delete_sh:
+        submit_commands.append(job.sge_submit_command())
 
-    # Sort bam by query (aka read name) 
-    qsort_bam = job.sambamba_sort(extract_bam, queryname=True)
+    #### Job #3: Query sorting the HLA BAM. ####
+    job = WGS_HLAJobScript(sample_name=sample_name,
+        job_suffix='query_sort_hla_bam',
+        threads=8,
+        memory=32,
+        linkdir=os.path.join(linkdir),
+        outdir=os.path.join(outdir, 'reads'),
+        queue=queue,
+        conda_env='hla',
+        modules='sambamba/0.6.1',
+        wait_for=[extract_hla_job])
+    qsort_job = job.jobname 
+    job.add_input_file(hla_bam)
+    qsort_bam = job.sambamba_sort(hla_bam, queryname=True)
     job.add_output_file(qsort_bam)
+    job.write_end()
+    if not job.delete_sh:
+        submit_commands.append(job.sge_submit_command())
 
-    # Generate R1 and R2 Fastq files 
+    #### Job #4: Converting the HLA BAM into R1 and R2 fastq's ####
+    job = WGS_HLAJobScript(sample_name=sample_name,
+        job_suffix='bamtofastq',
+        threads=1,
+        memory=4,
+        linkdir=os.path.join(linkdir),
+        outdir=os.path.join(outdir, 'reads'),
+        queue=queue,
+        conda_env='hla',
+        modules='bedtools/2.25.0',
+        wait_for=[qsort_job])
+    bamtofastq_job = job.jobname
+    job.add_input_file(in_bam)
     (fastq_r1, fastq_r2) = job.bedtools_bamtofastq(qsort_bam, paired=True)
     fastq_r1 = job.add_output_file(fastq_r1)
     fastq_r2 = job.add_output_file(fastq_r2)
     job.write_end()
-    extract_job = job.jobname
-
     if not job.delete_sh:
         submit_commands.append(job.sge_submit_command())
 
-    #### Job #2: Generate HLA types using PHLAT #### 
+    # Removing the indexing. I'm going to assume that the index files are already there.
+    # This is true for most coverage experiments except for 25. DJ forgot to index them 
+    # or deleted the data for these files.  
+    #index_bam = job.sambamba_index(in_bam)
+    #job.add_temp_file(index_bam)
+
+
+    #### Job #5: Generate HLA types using PHLAT #### 
     job = WGS_HLAJobScript(sample_name=sample_name,
-        job_suffix=JOBNAMES[1],
+        job_suffix='run_phlat',
         threads=8,
         memory=32,
         linkdir=os.path.join(linkdir),
@@ -473,49 +660,109 @@ def pipeline(
         queue=queue,
         conda_env='hla',
         modules='',
-        wait_for=[extract_job])
+        wait_for=[bamtofastq_job])
+    phlat_job = job.jobname
+    job.add_input_file(fastq_r1)
+    job.add_input_file(fastq_r2)
     phlat = job.phlat_typing(fastq_r1, fastq_r2)
     job.add_output_file(phlat)
     job.write_end()
     if not job.delete_sh:
         submit_commands.append(job.sge_submit_command()) 
         
-    ### Job #3: Preprocessing for VBSeq, aligning to HLA fasta ####
+    ### Job #6: Preprocessing for VBSeq, aligning to HLA sequence database. ####
     job = WGS_HLAJobScript(sample_name=sample_name,
-        job_suffix='pre_align_vbseq',
+        job_suffix='multi_map_mhc_reads',
         threads=8,
         memory=32,
         linkdir=os.path.join(linkdir),
         outdir=os.path.join(outdir, 'reads'),
         queue=queue,
         conda_env='hla',
-        modules='bwa',
-        wait_for=[extract_job])
+        modules='bwa,samtools/1.2',
+        wait_for=[bamtofastq_job])
+    multi_map_mhc_reads_job = job.jobname
     job.add_input_file(fastq_r1)
     job.add_input_file(fastq_r2)
-    sam = job.bwa_align(fastq_r1, fastq_r2, hla_ref)
-    pre_align_vbseq = job.jobname
+    multi_map_sam = job.bwa_multi_map(fastq_r1, fastq_r2, hla_ref)
     if not job.delete_sh:
         submit_commands.append(job.sge_submit_command())
         
-    #### Job #4: Running VBSeq and parsing results####
+    #### Job #7: Running VBSeq and parsing results. ####
     job = WGS_HLAJobScript(sample_name=sample_name,
         job_suffix='run_vbseq',
         threads=1,
-        memory=32,
+        memory=5,
         linkdir=os.path.join(linkdir),
         outdir=os.path.join(outdir, 'hla'),
         queue=queue,
         conda_env='hla',
         modules='HLA-VBSeq',
-        wait_for=[pre_align_vbseq])
-    #job.add_temp_file(sam)
-    # running VBSeq
-    vbseq = job.vbseq_typing(sam, hla_ref)
-    #job.add_temp_file(vbseq)
-    # parsing results
-    vbseq_parsed = job.parse_vbseq_results(vbseq, hla_allele_list, email)
-    job.add_output_file(vbseq_parsed)
+        wait_for=[multi_map_mhc_reads_job])
+    vbseq_job = job.jobname
+    job.add_input_file(multi_map_sam)
+    raw_vbseq = job.vbseq_typing(multi_map_sam, hla_ref)
+    parsed_vbseq = job.parse_vbseq_results(raw_vbseq, hla_allele_list, email)
+    job.add_output_file(raw_vbseq)
+    job.add_output_file(parsed_vbseq)
+    job.write_end()
+    if not job.delete_sh:
+        submit_commands.append(job.sge_submit_command())
+        
+    ##### Submission script #####
+    now = str(dt.datetime.now())
+    now = now.replace('-', '_').replace(' ', '_').replace(':', '_').replace('.', '_')
+    submit_fn = os.path.join(outdir, 'sh/', '{}_submit_{}.sh'.format(sample_name, now))
+    with open(submit_fn, 'w') as f:
+            f.write('#!/bin/bash\n\n')
+            f.write('\n'.join(submit_commands))   
+    return submit_fn
+
+def vbseq_variability_pipeline(
+        sample_name,
+        multi_map_bam,
+        hla_ref,
+        hla_allele_list,
+        linkdir, 
+        outdir,
+        queue = None,
+        webpath = None,
+        email = False,
+    ):  
+    """
+    Make SGE/shell scripts for running the entire HLA pipeline. The defaults
+    are set for use on the Frazer lab's SGE schedule on flh1/flh2. 
+
+    Parameters
+    __________
+    multi_map_bam : str
+    linkdir : str, 
+    outdir : str,
+    hla_regions_bed: str,
+    coverage_bed: str,
+    queue : str
+
+    """
+    
+    submit_commands = [] 
+
+    #### Job #1: Running VBSeq and parsing results. ####
+    job = WGS_HLAJobScript(sample_name=sample_name,
+        job_suffix='run_vbseq',
+        threads=1,
+        memory=5,
+        linkdir=os.path.join(linkdir),
+        outdir=os.path.join(outdir, 'hla'),
+        queue=queue,
+        conda_env='hla',
+        modules='HLA-VBSeq',
+    )
+    vbseq_job = job.jobname
+    job.add_input_file(multi_map_bam)
+    raw_vbseq = job.vbseq_typing(multi_map_bam, hla_ref)
+    parsed_vbseq = job.parse_vbseq_results(raw_vbseq, hla_allele_list, email)
+    job.add_output_file(raw_vbseq)
+    job.add_output_file(parsed_vbseq)
     job.write_end()
     if not job.delete_sh:
         submit_commands.append(job.sge_submit_command())

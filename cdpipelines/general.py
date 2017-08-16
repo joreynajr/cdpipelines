@@ -37,6 +37,7 @@ class JobScript:
         modules=None, 
         wait_for=None, 
         copy_input=False,
+        alt_sh=None,
     ):
         """
         Create SGE/shell script object.
@@ -89,6 +90,10 @@ class JobScript:
 
         copy_input : bool
             Whether to copy input files to temp directory. 
+
+        alt_sub_dir : str
+            Alternative sub-directory for all files. My current case is the HLA typing
+            pipeline where many scripts are generated at once. 
 
         """
         # Sample name used for naming files.
@@ -153,17 +158,37 @@ class JobScript:
         # File to write web URLs and tracklines to.
         self.links_tracklines = os.path.join(
             self.outdir, '{}_links_tracklines.txt'.format(self.sample_name))
+        # Set alt_sh if the pipeline will make subdirectories for the sh files 
+        self.alt_sh = alt_sh 
         # Set shell script file name.
         self._set_filename()
         # Write shell/SGE header.
         self._write_header()
 
+    @classmethod 
+    def _add_execution_date(self, cmd):
+        lines = []
+        lines.append('date 1>&2')
+        lines.append('cmd="{}"'.format(cmd))
+        lines.append('echo Executing: $cmd 1>&2')
+        lines.append('eval $cmd')
+        lines.append('date 1>&2\n\n')
+        return lines 
+
+
     def _set_filename(self):
         """Make SGE/shell script filename. If a shell script already exists, the
         current shell script will be stored as a temp file."""
-        _make_dir(os.path.join(os.path.split(self.outdir)[0], 'sh'))
-        self.filename = os.path.join(os.path.split(self.outdir)[0], 'sh',
-                                     '{}.sh'.format(self.jobname[4:]))
+        sh_dir = os.path.join(os.path.split(self.outdir)[0], 'sh')
+        _make_dir(sh_dir)
+        
+        if self.alt_sh:
+            sh_dir = os.path.join(sh_dir, self.alt_sh)
+            _make_dir(sh_dir)
+            self.filename = os.path.join(sh_dir, '{}.sh'.format(self.jobname[4:]))
+
+        else:
+            self.filename = os.path.join(sh_dir, '{}.sh'.format(self.jobname[4:]))
         # If the shell script already exists we'll assume that the script is
         # just being created to get the output filenames etc. so we'll write to
         # a temp file.
@@ -920,6 +945,7 @@ class JobScript:
         self,
         in_bam, 
         sambamba_path='sambamba',
+        suffix=None,
     ):
         """
         Index bam file using sambamba.
@@ -938,9 +964,16 @@ class JobScript:
             Path to output index file.
     
         """
-        index = os.path.join(self.tempdir, os.path.split(in_bam)[1] + '.bai')
+
+        if suffix: 
+            index = os.path.join(self.tempdir, '{}_{}.bai'.format(os.path.split(in_bam)[1], suffix))
+
+        else: 
+            index = os.path.join(self.tempdir, os.path.split(in_bam)[1] + '.bai')
+
         lines = '{} index -t {} \\\n\t{} \\\n\t{}\n\n'.format(
             sambamba_path, self.threads, in_bam, index)
+
         with open(self.filename, "a") as f:
             f.write(lines)
         return index
@@ -1420,6 +1453,8 @@ class JobScript:
         tempdir='.',
         root=None,
         sambamba_path='sambamba',
+        suffix=None,
+        
     ):
         """
         Coordinate sort using sambamba.
@@ -1451,12 +1486,21 @@ class JobScript:
         """
         if not root:
             root = self.sample_name
+
         if queryname:
-            out_bam = os.path.join(
-                self.tempdir, '{}_query_sorted.bam'.format(root))
+            if suffix: 
+                out_bam = os.path.join(
+                    self.tempdir, '{}_query_sorted_{}.bam'.format(root, suffix))
+            else:
+                out_bam = os.path.join(
+                    self.tempdir, '{}_query_sorted.bam'.format(root))
         else:
-            out_bam = os.path.join(
-                self.tempdir, '{}_sorted.bam'.format(root))
+            if suffix: 
+                out_bam = os.path.join(
+                    self.tempdir, '{}_sorted_{}.bam'.format(root, suffix))
+            else: 
+                out_bam = os.path.join(
+                    self.tempdir, '{}_sorted.bam'.format(root))
         lines = '{} sort -m {}GB -t {}'.format(sambamba_path, self.memory - 2,
                                                self.threads)
         if queryname:
@@ -1464,10 +1508,12 @@ class JobScript:
         lines += ' \\\n\t'
         lines += '--tmpdir {} \\\n\t'.format(tempdir)
         lines += '{} \\\n\t'.format(in_bam)
-        lines += '-o {}\n\n'.format(out_bam)
+        lines += '-o {}'.format(out_bam)
+
+        lines = self._add_execution_date(lines)
 
         with open(self.filename, "a") as f:
-            f.write(lines)
+            f.write('\n'.join(lines))
         return out_bam
     
     def picard_coord_sort(
