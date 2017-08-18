@@ -104,6 +104,45 @@ class WGS_HLAJobScript(JobScript):
             lines = '\n'.join(lines)
             f.write(lines)
         return index
+
+    def picard_downsampling(self,
+        in_bam,
+        random_seed,
+        read_probability,
+        suffix=None,
+    ):
+        """
+        Down sample the bam file using picard.
+
+        Parameters
+        ----------
+        in_bam : str
+            Path to file input bam file.
+            
+        random_seed: int
+            Random seed for random sampling. 
+        
+        read_probability: float
+            Probability of keeping a read. 
+        
+        Returns
+        -------
+        
+        out_bam : str
+            Path to file output bam file.
+        """
+        ds_int = int(read_probability * 100)
+        out_bam = os.path.basename(in_bam).replace('ds100', 'ds{}'.format(ds_int))
+        out_bam = os.path.join(self.outdir, out_bam)
+        cmd = 'java -Xmx2G -jar $picard DownsampleSam I={} O={} RANDOM_SEED={} P={}'.\
+            format(in_bam, out_bam, random_seed, read_probability)
+            
+        lines = self._add_execution_date(cmd)
+        with open(self.filename, "a") as f:
+            lines = '\n'.join(lines)
+            f.write(lines)
+        return out_bam
+
     
     #    def samtools_extract_regions(self, in_bam, regions):
     #        
@@ -507,6 +546,52 @@ class WGS_HLAJobScript(JobScript):
             if email == True:
                 f.write('echo Hello Mars! | mail -r joreyna@flh1.ucsd.edu -s "Jobs are complete." joreyna@live.com\n')
         return vbseq_result_fn  
+
+    def generate_vbseq_top_alleles_fasta(self, resolution, top, hla_bed, hla_fasta, raw_vbseq):
+        """
+        Down sample the bam file using picard.
+
+        Parameters
+        ----------
+        top: int 
+            Number of top alleles to consider
+        resolution: int
+            HLA type resolution to consider. 
+        hla_bed: str
+            Bed file derived from hla_gen.fasta
+        hla_fasta
+            HLA reference file from IPD/IMGT HLA database, (e.g. hla_gen.fasta)
+            
+            
+        
+        Returns
+        -------
+        
+        out_bam : str
+            Path to file output bam file.
+        """   
+        
+        output_bed = os.path.join(self.outdir, '{}_res_{}_top_{}.bed'.format(self.sample_name, resolution, top))
+        output_fasta  = os.path.join(self.outdir, '{}_res_{}_top_{}.fasta'.format(self.sample_name, resolution, top))
+        
+        args = [self.sample_name, resolution, top, hla_bed, hla_fasta, self.outdir, raw_vbseq]
+        
+        from __init__ import _scripts 
+        generate_top_alleles_fasta_script = os.path.join(_scripts, 'generate_vbseq_top_alleles_fasta.py')
+        cmd = 'python {} \\'.format(generate_top_alleles_fasta_script)
+        for i, x in enumerate(args):
+            if i < len(args) - 1:
+                cmd += '\n\t' + str(x) + ' \\'
+            else:
+                cmd += '\n\t' + str(x)
+                
+        lines = self._add_execution_date(cmd)
+        with open(self.filename, "a") as f:
+            lines = '\n'.join(lines)
+            f.write(lines)
+            
+        return output_bed, output_fasta
+
     
     def bash_submit_command(self):
         """Get command to submit script."""
@@ -718,9 +803,227 @@ def pipeline(
             f.write('\n'.join(submit_commands))   
     return submit_fn
 
+def vbseq_variability_downsample_pipeline(
+        sample_name,
+        mhc_bam,
+        linkdir, 
+        outdir,
+        hla_regions_bed,
+        coverage_bed,
+        hla_ref,
+        hla_allele_list,
+        seed,
+        read_probability,
+        queue = None,
+        webpath = None,
+        email = False,
+        run_all = False
+    ):  
+    """
+    Make SGE/shell scripts for running the entire HLA pipeline. The defaults
+    are set for use on the Frazer lab's SGE schedule on flh1/flh2. 
+
+    Parameters
+    __________
+    mhc_bam : str
+    linkdir : str, 
+    outdir : str,
+    hla_regions_bed: str,
+    coverage_bed: str,
+    read_probability: float,
+    seed: int,
+    bowtie2 : str
+    phlat_dir : str
+    queue : str
+    webpath: str
+    email: bool 
+    run_all: bool
+        This pipeline is meant to test the variability of HLA-VBSeq
+        predictions. So only some parts of the complete pipeline are
+        run. If run_all is set to true then all parts will run.
+
+    """
+    
+    submit_commands = [] 
+   
+    #### Job #1: Down samplings reads in the MHC region. ####
+    job = WGS_HLAJobScript(sample_name=sample_name,
+        job_suffix='picard_downsample',
+        threads=1,
+        memory=5,
+        linkdir=linkdir,
+        outdir=os.path.join(outdir, 'reads'),
+        queue=queue,
+        conda_env='hla',
+        modules='picard,sambamba')
+    down_sample_job = job.jobname
+    job.add_input_file(mhc_bam)
+    ds_mhc_bam = job.picard_downsampling(mhc_bam, \
+        seed, read_probability, suffix=None)
+    ds_mhc_bam_index = job.sambamba_index(ds_mhc_bam, sambamba_path='sambamba')
+    job.add_output_file(ds_mhc_bam)
+    job.add_output_file(ds_mhc_bam_index)
+    job.write_end()
+    if not job.delete_sh:
+        submit_commands.append(job.sge_submit_command())
+
+    if run_all:
+        #### Job #2: Calculating depth for the MHC loci and surroudng region using the MHC BAM. ####
+        job = WGS_HLAJobScript(sample_name=sample_name,
+            job_suffix='calculate_depth',
+            threads=1,
+            memory=4,
+            linkdir=os.path.join(linkdir),
+            outdir=os.path.join(outdir, 'reads'),
+            queue=queue,
+            conda_env='hla',
+            modules='samtools/1.2', 
+            wait_for=[down_sample_job])
+        depth_job = job.jobname
+        job.add_input_file(ds_mhc_bam)
+        depth = job.samtools_depth(ds_mhc_bam, coverage_bed)
+        job.add_output_file(depth)
+        job.write_end()
+        if not job.delete_sh:
+            submit_commands.append(job.sge_submit_command())
+
+    #### Job #3: Extracting alignments in the HLA loci from the MHC BAM. ####
+    job = WGS_HLAJobScript(sample_name=sample_name,
+        job_suffix='extract_hla_data',
+        threads=8,
+        memory=32,
+        linkdir=os.path.join(linkdir),
+        outdir=os.path.join(outdir, 'reads'),
+        queue=queue,
+        conda_env='hla',
+        modules='samtools/1.2',
+        wait_for=[down_sample_job])
+    extract_hla_job = job.jobname
+    job.add_input_file(ds_mhc_bam)
+    hla_bam = job.samtools_extract_bed(ds_mhc_bam, hla_regions_bed, loci='hla')
+    job.add_output_file(hla_bam)
+    job.write_end()
+    if not job.delete_sh:
+        submit_commands.append(job.sge_submit_command())
+
+    #### Job #3: Query sorting the HLA BAM. ####
+    job = WGS_HLAJobScript(sample_name=sample_name,
+        job_suffix='query_sort_hla_bam',
+        threads=8,
+        memory=32,
+        linkdir=os.path.join(linkdir),
+        outdir=os.path.join(outdir, 'reads'),
+        queue=queue,
+        conda_env='hla',
+        modules='sambamba/0.6.1',
+        wait_for=[extract_hla_job])
+    qsort_job = job.jobname 
+    job.add_input_file(hla_bam)
+    qsort_bam = job.sambamba_sort(hla_bam, queryname=True)
+    job.add_output_file(qsort_bam)
+    job.write_end()
+    if not job.delete_sh:
+        submit_commands.append(job.sge_submit_command())
+
+    #### Job #4: Converting the HLA BAM into R1 and R2 fastq's ####
+    job = WGS_HLAJobScript(sample_name=sample_name,
+        job_suffix='bamtofastq',
+        threads=1,
+        memory=4,
+        linkdir=os.path.join(linkdir),
+        outdir=os.path.join(outdir, 'reads'),
+        queue=queue,
+        conda_env='hla',
+        modules='bedtools/2.25.0',
+        wait_for=[qsort_job])
+    bamtofastq_job = job.jobname
+    job.add_input_file(ds_mhc_bam)
+    (fastq_r1, fastq_r2) = job.bedtools_bamtofastq(qsort_bam, paired=True)
+    fastq_r1 = job.add_output_file(fastq_r1)
+    fastq_r2 = job.add_output_file(fastq_r2)
+    job.write_end()
+    if not job.delete_sh:
+        submit_commands.append(job.sge_submit_command())
+
+    # Removing the indexing. I'm going to assume that the index files are already there.
+    # This is true for most coverage experiments except for 25. DJ forgot to index them 
+    # or deleted the data for these files.  
+    #index_bam = job.sambamba_index(ds_mhc_bam)
+    #job.add_temp_file(index_bam)
+
+    if run_all:
+        #### Job #5: Generate HLA types using PHLAT #### 
+        job = WGS_HLAJobScript(sample_name=sample_name,
+            job_suffix='run_phlat',
+            threads=8,
+            memory=32,
+            linkdir=os.path.join(linkdir),
+            outdir=os.path.join(outdir, 'hla'),
+            queue=queue,
+            conda_env='hla',
+            modules='',
+            wait_for=[bamtofastq_job])
+        phlat_job = job.jobname
+        job.add_input_file(fastq_r1)
+        job.add_input_file(fastq_r2)
+        phlat = job.phlat_typing(fastq_r1, fastq_r2)
+        job.add_output_file(phlat)
+        job.write_end()
+        if not job.delete_sh:
+            submit_commands.append(job.sge_submit_command()) 
+        
+    ### Job #6: Preprocessing for VBSeq, aligning to HLA sequence database. ####
+    job = WGS_HLAJobScript(sample_name=sample_name,
+        job_suffix='multi_map_mhc_reads',
+        threads=8,
+        memory=32,
+        linkdir=os.path.join(linkdir),
+        outdir=os.path.join(outdir, 'reads'),
+        queue=queue,
+        conda_env='hla',
+        modules='bwa,samtools/1.2',
+        wait_for=[bamtofastq_job])
+    multi_map_mhc_reads_job = job.jobname
+    job.add_input_file(fastq_r1)
+    job.add_input_file(fastq_r2)
+    multi_map_sam = job.bwa_multi_map(fastq_r1, fastq_r2, hla_ref)
+    if not job.delete_sh:
+        submit_commands.append(job.sge_submit_command())
+        
+    #### Job #7: Running VBSeq and parsing results. ####
+    job = WGS_HLAJobScript(sample_name=sample_name,
+        job_suffix='run_vbseq',
+        threads=1,
+        memory=5,
+        linkdir=os.path.join(linkdir),
+        outdir=os.path.join(outdir, 'hla'),
+        queue=queue,
+        conda_env='hla',
+        modules='HLA-VBSeq',
+        wait_for=[multi_map_mhc_reads_job])
+    vbseq_job = job.jobname
+    job.add_input_file(multi_map_sam)
+    raw_vbseq = job.vbseq_typing(multi_map_sam, hla_ref)
+    parsed_vbseq = job.parse_vbseq_results(raw_vbseq, hla_allele_list, email)
+    job.add_output_file(raw_vbseq)
+    job.add_output_file(parsed_vbseq)
+    job.write_end()
+    if not job.delete_sh:
+        submit_commands.append(job.sge_submit_command())
+        
+    ##### Submission script #####
+    now = str(dt.datetime.now())
+    now = now.replace('-', '_').replace(' ', '_').replace(':', '_').replace('.', '_')
+    submit_fn = os.path.join(outdir, 'sh/', '{}_submit_{}.sh'.format(sample_name, now))
+    with open(submit_fn, 'w') as f:
+            f.write('#!/bin/bash\n\n')
+            f.write('\n'.join(submit_commands))   
+    return submit_fn
+
 def vbseq_variability_pipeline(
         sample_name,
-        multi_map_bam,
+        fastq_r1,
+        fastq_r2,
         hla_ref,
         hla_allele_list,
         linkdir, 
@@ -746,7 +1049,24 @@ def vbseq_variability_pipeline(
     
     submit_commands = [] 
 
-    #### Job #1: Running VBSeq and parsing results. ####
+    ### Job #1: Preprocessing for VBSeq, aligning to HLA sequence database. ####
+    job = WGS_HLAJobScript(sample_name=sample_name,
+        job_suffix='multi_map_mhc_reads',
+        threads=8,
+        memory=12,
+        linkdir=os.path.join(linkdir),
+        outdir=os.path.join(outdir, 'reads'),
+        queue=queue,
+        conda_env='hla',
+        modules='bwa,samtools/1.2')
+    multi_map_mhc_reads_job = job.jobname
+    job.add_input_file(fastq_r1)
+    job.add_input_file(fastq_r2)
+    multi_map_bam = job.bwa_multi_map(fastq_r1, fastq_r2, hla_ref)
+    if not job.delete_sh:
+        submit_commands.append(job.sge_submit_command())
+
+    #### Job #2: Running VBSeq and parsing results. ####
     job = WGS_HLAJobScript(sample_name=sample_name,
         job_suffix='run_vbseq',
         threads=1,
@@ -755,11 +1075,104 @@ def vbseq_variability_pipeline(
         outdir=os.path.join(outdir, 'hla'),
         queue=queue,
         conda_env='hla',
-        modules='HLA-VBSeq',
+        wait_for=[multi_map_mhc_reads_job],
+        modules='HLA-VBSeq'
     )
     vbseq_job = job.jobname
     job.add_input_file(multi_map_bam)
     raw_vbseq = job.vbseq_typing(multi_map_bam, hla_ref)
+    parsed_vbseq = job.parse_vbseq_results(raw_vbseq, hla_allele_list, email)
+    job.add_output_file(raw_vbseq)
+    job.add_output_file(parsed_vbseq)
+    job.write_end()
+    if not job.delete_sh:
+        submit_commands.append(job.sge_submit_command())
+        
+    ##### Submission script #####
+    now = str(dt.datetime.now())
+    now = now.replace('-', '_').replace(' ', '_').replace(':', '_').replace('.', '_')
+    submit_fn = os.path.join(outdir, 'sh/', '{}_submit_{}.sh'.format(sample_name, now))
+    with open(submit_fn, 'w') as f:
+            f.write('#!/bin/bash\n\n')
+            f.write('\n'.join(submit_commands))   
+    return submit_fn
+
+def rerun_top_alleles_pipeline(
+        sample_name,
+        resolution,
+        top, 
+        hla_bed, 
+        hla_fastq, 
+        raw_vbseq, 
+        mhc_bam,
+        linkdir, 
+        outdir,
+        hla_regions_bed,
+        coverage_bed,
+        hla_ref,
+        hla_allele_list,
+        queue = None,
+        webpath = None,
+        email = False,
+        run_all = False
+    ):  
+    """
+    Make SGE/shell scripts for running the entire HLA pipeline. The defaults
+    are set for use on the Frazer lab's SGE schedule on flh1/flh2. 
+
+    Parameters
+    __________
+    resolution: int
+        HLA type resolution to consider. 
+    top: int 
+        Number of top alleles to consider
+    hla_bed: str
+        Bed file derived from hla_gen.fasta
+    hla_fasta
+        HLA reference file from IPD/IMGT HLA database, (e.g. hla_gen.fasta)
+    mhc_bam : str
+    linkdir : str, 
+    outdir : str,
+    hla_regions_bed: str,
+    coverage_bed: str,
+    queue : str
+    webpath: str
+    """
+    
+    submit_commands = [] 
+    #### Job #1: Extract the top alleles 
+    job = WGS_HLAJobScript(sample_name=sample_name, 
+        job_suffix='gen_top_sequences', 
+        threads=1, 
+        memory=5, 
+        linkdir=linkdir,
+        outdir = os.path.join(outdir, 'hla'), 
+        queue=queue,
+        conda_env='hla', 
+        modules='bedtools')
+    top_alleles_job = job.jobname
+    job.add_input_file(raw_hla_vbseq)
+    top_alleles_bed, top_alleles_fasta = \
+        job.generate_vbseq_top_alleles_fasta(resolution, top, hla_bed, hla_fasta, raw_vbseq)
+    job.add_output_file(top_alleles_bed)
+    job.add_output_file(top_alleles_fasta)
+
+    #### Job #2: Running VBSeq and parsing results. ####
+    job = WGS_HLAJobScript(sample_name=sample_name,
+        job_suffix='run_vbseq',
+        threads=1,
+        memory=5,
+        linkdir=linkdir,
+        outdir=os.path.join(outdir, 'hla'),
+        queue=queue,
+        conda_env='hla',
+        modules='HLA-VBSeq',
+        waitfor=[top_alleles_job])
+
+    vbseq_job = job.jobname
+    job.add_input_file(multi_map_bam)
+    job.add_input_file(top_alleles_fasta)
+    raw_vbseq = job.vbseq_typing(multi_map_bam, top_alleles_fasta)
     parsed_vbseq = job.parse_vbseq_results(raw_vbseq, hla_allele_list, email)
     job.add_output_file(raw_vbseq)
     job.add_output_file(parsed_vbseq)

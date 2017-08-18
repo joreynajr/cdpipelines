@@ -118,7 +118,8 @@ class JobScript:
         assert type(memory) is int
         self.memory = memory
         # Directory to make softlinks in.
-        _make_dir(linkdir)
+        if linkdir: 
+            _make_dir(linkdir)
         self.linkdir = linkdir
         # Path on the web where output files linked to self.linkdir will be
         # available.

@@ -19,6 +19,7 @@ scripts = ['cdpipelines/scripts/sample_check/callVariants.sh',
 	'cdpipelines/scripts/sample_check/rna_sample_match.sh',
 	'cdpipelines/scripts/calculate_peak_enrichment.py',
 	'cdpipelines/scripts/queryDatabase.py'
+	'cdpipelines/scripts/generate_lower_resolution_hla_fasta.py'
 ]
 
 setup(
