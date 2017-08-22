@@ -72,6 +72,39 @@ def delete_script(
 
 
 class WGS_HLAJobScript(JobScript):
+
+    def bwa_index(
+        self,
+        in_fasta,
+    ):
+        """
+        Index fasta file using bwa.
+
+        Parameters
+        ----------
+        in_fasta : str
+            Path to file input fasta file.
+
+        index : str
+            Path to index file to be written. If not provided, the index is
+            written to the bwa default {in_bam}.bai in the current working
+            directory.
+
+        Returns
+        -------
+        index : str
+            Path to index file for input fasta file.
+
+        """
+        indexes = [os.path.join(self.tempdir, os.path.splitext(in_fasta)[0] + ext) \
+                    for ext in ['.amb', '.ann', '.bwt', '.pac', '.sa']]
+        
+        cmd = 'bwa index {}'.format(in_fasta)
+        lines = self._add_execution_date(cmd)
+        with open(self.filename, "a") as f:
+            lines = '\n'.join(lines)
+            f.write(lines)
+        return indexes
     
     def sambamba_index(
         self,
@@ -1102,19 +1135,16 @@ def rerun_top_alleles_pipeline(
         resolution,
         top, 
         hla_bed, 
-        hla_fastq, 
+        hla_ref, 
         raw_vbseq, 
-        mhc_bam,
+        fastq_r1,
+        fastq_r2,
         linkdir, 
         outdir,
-        hla_regions_bed,
-        coverage_bed,
-        hla_ref,
         hla_allele_list,
         queue = None,
         webpath = None,
         email = False,
-        run_all = False
     ):  
     """
     Make SGE/shell scripts for running the entire HLA pipeline. The defaults
@@ -1128,7 +1158,7 @@ def rerun_top_alleles_pipeline(
         Number of top alleles to consider
     hla_bed: str
         Bed file derived from hla_gen.fasta
-    hla_fasta
+    hla_ref
         HLA reference file from IPD/IMGT HLA database, (e.g. hla_gen.fasta)
     mhc_bam : str
     linkdir : str, 
@@ -1146,19 +1176,42 @@ def rerun_top_alleles_pipeline(
         threads=1, 
         memory=5, 
         linkdir=linkdir,
-        outdir = os.path.join(outdir, 'hla'), 
+        outdir = os.path.join(outdir, 'reads'), 
         queue=queue,
         conda_env='hla', 
-        modules='bedtools')
+        modules='bedtools,samtools,bwa')
     top_alleles_job = job.jobname
-    job.add_input_file(raw_hla_vbseq)
+    job.add_input_file(raw_vbseq)
     top_alleles_bed, top_alleles_fasta = \
-        job.generate_vbseq_top_alleles_fasta(resolution, top, hla_bed, hla_fasta, raw_vbseq)
+        job.generate_vbseq_top_alleles_fasta(resolution, top, hla_bed, hla_ref, raw_vbseq)
     job.add_output_file(top_alleles_bed)
     job.add_output_file(top_alleles_fasta)
+    top_alleles_fasta_indexes = job.bwa_index(top_alleles_fasta)
+    job.write_end()
+    if not job.delete_sh:
+        submit_commands.append(job.sge_submit_command())
 
-    #### Job #2: Running VBSeq and parsing results. ####
+    ### Job #2: Preprocessing for VBSeq, aligning to HLA sequence database. ####
     job = WGS_HLAJobScript(sample_name=sample_name,
+        job_suffix='multi_map_mhc_reads',
+        threads=8,
+        memory=12,
+        linkdir=os.path.join(linkdir),
+        outdir=os.path.join(outdir, 'reads'),
+        queue=queue,
+        conda_env='hla',
+        modules='bwa,samtools/1.2',
+        wait_for=[top_alleles_job])
+    multi_map_mhc_reads_job = job.jobname
+    job.add_input_file(fastq_r1)
+    job.add_input_file(fastq_r2)
+    multi_map_bam = job.bwa_multi_map(fastq_r1, fastq_r2, top_alleles_fasta)
+    job.write_end()
+    if not job.delete_sh:
+        submit_commands.append(job.sge_submit_command())
+
+    #### Job #3: Running VBSeq and parsing results. ####
+    job = WGS_HLAJobScript(sample_name=sample_name, 
         job_suffix='run_vbseq',
         threads=1,
         memory=5,
@@ -1167,7 +1220,7 @@ def rerun_top_alleles_pipeline(
         queue=queue,
         conda_env='hla',
         modules='HLA-VBSeq',
-        waitfor=[top_alleles_job])
+        wait_for=[multi_map_mhc_reads_job])
 
     vbseq_job = job.jobname
     job.add_input_file(multi_map_bam)
