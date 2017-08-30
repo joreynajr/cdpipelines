@@ -1425,7 +1425,8 @@ def peak_qc_pipeline(
 	conda_env=None,
 	modules=None,
 	queue=None,
-	global_celltype=None):
+	celltype=None,
+    datadir=None):
 
 	##### Job 1: Peak QC Statistics  
 	job = ATACJobScript(
@@ -1443,8 +1444,14 @@ def peak_qc_pipeline(
 	peak_qc_jobname = job.jobname
 	   
 	# Input files.
-	sort_rmdup_bam = job.add_input_file(os.path.join(outdir, 'alignment/', '{}_sorted_rmdup.bam'.format(sample_name)))
-	narrow_peaks = job.add_input_file(os.path.join(outdir, 'macs2/', '{}_peaks.narrowPeak'.format(sample_name)))
+	if not datadir: 
+		sort_rmdup_bam = job.add_input_file(os.path.join(outdir, 'alignment/', '{}_sorted_rmdup.bam'.format(sample_name)))
+		narrow_peaks = job.add_input_file(os.path.join(outdir, 'macs2/', '{}_peaks.narrowPeak'.format(sample_name)))
+		aln_metrics_fn = os.path.join(outdir, 'alignment/{0}_Log.final.out'.format(sample_name))
+	else:
+		sort_rmdup_bam = job.add_input_file(os.path.join(datadir, 'alignment/', '{}_sorted_rmdup.bam'.format(sample_name)))
+		narrow_peaks = job.add_input_file(os.path.join(datadir, 'macs2/', '{}_peaks.narrowPeak'.format(sample_name)))
+		aln_metrics_fn = os.path.join(datadir, 'alignment/{0}_Log.final.out'.format(sample_name)) \
 
 	# Output files. 
 	variant_coverage = job.add_output_file(os.path.join(outdir, 'qc/', '{}_variant.coverage'.format(sample_name)))
@@ -1452,15 +1459,8 @@ def peak_qc_pipeline(
 	peak_qc_metrics = job.add_output_file(os.path.join(outdir, 'qc/', '{}_peak_qc.tsv'.format(sample_name)))
 	log = job.add_output_file(os.path.join(outdir, 'logs/', '{}_peak_qc.log'.format(sample_name)))
 
-	if global_celltype == None:	
-		celltype = job._get_data_atacs_cell_type(sample_name)
-	else:
-		celltype = global_celltype
-
 	# Extracting Number of input reads from STAR log file. 
-	aln_metrics = pd.read_csv( \
-		os.path.join(outdir, 'alignment/{0}_Log.final.out'.format(sample_name)), \
-		  header=None, sep='|', index_col=0, skiprows=[4, 7, 22, 27])
+	aln_metrics = pd.read_csv(aln_metrics_fn, header=None, sep='|', index_col=0, skiprows=[4, 7, 22, 27])
 	aln_metrics.iloc[:, 0] = aln_metrics.iloc[:, 0].apply(lambda x: x.strip())
 	aln_metrics.index = aln_metrics.index.str.strip()
 	num_input_reads = int(aln_metrics.ix['Number of input reads', 1])
