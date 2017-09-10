@@ -1285,7 +1285,7 @@ def pipeline(
 	dexseq_counts = job.dexseq_count(
 		mdup_bam, 
 		dexseq_annotation,
-		paired=True, 
+		paired=paired_end, 
 		strand_specific=strand_specific,
 		dexseq_count_path=dexseq_count_path,
 		samtools_path=samtools_path,
@@ -1612,6 +1612,7 @@ def trim_pipeline(
 	min_read_len=100,
 	d50_adapter_fn=None,
 	d70_adapter_fn=None,
+    paired_end=True,
 ):
 	"""
 	Make SGE/shell scripts for running the entire RNA-seq pipeline. The defaults
@@ -2236,6 +2237,7 @@ def trim_pipeline(
 	gene_counts, gene_count_stats = job.featureCounts_count(
 		gene_gtf,
 		mdup_bam,
+        paired_end,
 		both=True,
 		strand_specific=ss,
 		featureCounts_path=featureCounts_path,

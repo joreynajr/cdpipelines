@@ -1420,23 +1420,19 @@ def pipeline(
 def peak_qc_pipeline(
 	outdir, 
 	sample_name, 
-	linkdir=None,
-	webpath_file=None,
+	celltype,
 	conda_env=None,
 	modules=None,
 	queue=None,
-	celltype=None,
     datadir=None):
 
 	##### Job 1: Peak QC Statistics  
 	job = ATACJobScript(
 		sample_name, 
-		job_suffix = 'peak_qc',
+		job_suffix = '{}_peak_qc'.format(celltype),
 		outdir=os.path.join(outdir, 'qc'),
 		threads=1, 
 		memory=4, 
-		linkdir=linkdir,
-		webpath=webpath_file,
 		queue=queue,
 		conda_env=conda_env, 
 		modules=modules,
@@ -1444,33 +1440,30 @@ def peak_qc_pipeline(
 	peak_qc_jobname = job.jobname
 	   
 	# Input files.
-	if not datadir: 
+	if not datadir: # Assuming the files are coming from the main pipeline output
 		sort_rmdup_bam = job.add_input_file(os.path.join(outdir, 'alignment/', '{}_sorted_rmdup.bam'.format(sample_name)))
 		narrow_peaks = job.add_input_file(os.path.join(outdir, 'macs2/', '{}_peaks.narrowPeak'.format(sample_name)))
 		aln_metrics_fn = os.path.join(outdir, 'alignment/{0}_Log.final.out'.format(sample_name))
-	else:
+	else: # Specifying a particular directory where the data is located 
 		sort_rmdup_bam = job.add_input_file(os.path.join(datadir, 'alignment/', '{}_sorted_rmdup.bam'.format(sample_name)))
 		narrow_peaks = job.add_input_file(os.path.join(datadir, 'macs2/', '{}_peaks.narrowPeak'.format(sample_name)))
 		aln_metrics_fn = os.path.join(datadir, 'alignment/{0}_Log.final.out'.format(sample_name)) \
 
 	# Output files. 
-	variant_coverage = job.add_output_file(os.path.join(outdir, 'qc/', '{}_variant.coverage'.format(sample_name)))
-	region_coverage = job.add_output_file(os.path.join(outdir, 'qc/', '{}_region.coverage'.format(sample_name)))
-	peak_qc_metrics = job.add_output_file(os.path.join(outdir, 'qc/', '{}_peak_qc.tsv'.format(sample_name)))
-	log = job.add_output_file(os.path.join(outdir, 'logs/', '{}_peak_qc.log'.format(sample_name)))
+	variant_coverage = job.add_output_file(os.path.join(outdir, 'qc/', '{}_{}_variant.coverage'.format(sample_name, celltype)))
+	region_coverage = job.add_output_file(os.path.join(outdir, 'qc/', '{}_{}_region.coverage'.format(sample_name, celltype)))
+	peak_qc_metrics = job.add_output_file(os.path.join(outdir, 'qc/', '{}_{}_peak_qc.tsv'.format(sample_name, celltype)))
+	log = job.add_output_file(os.path.join(outdir, 'logs/', '{}_{}_peak_qc.log'.format(sample_name, celltype)))
 
 	# Extracting Number of input reads from STAR log file. 
 	aln_metrics = pd.read_csv(aln_metrics_fn, header=None, sep='|', index_col=0, skiprows=[4, 7, 22, 27])
 	aln_metrics.iloc[:, 0] = aln_metrics.iloc[:, 0].apply(lambda x: x.strip())
 	aln_metrics.index = aln_metrics.index.str.strip()
 	num_input_reads = int(aln_metrics.ix['Number of input reads', 1])
-
 	variant_coverage, region_coverage, peak_qc_metrics = \
 		job.calculate_peak_qc_stats(sample_name, sort_rmdup_bam, narrow_peaks, variant_coverage, region_coverage, peak_qc_metrics, celltype, num_input_reads, log)
-
 	job.write_end()
-
-	return os.path.join(outdir, 'sh/', '{}_peak_qc.sh'.format(sample_name))
+	return os.path.join(outdir, 'sh/', '{}_{}_peak_qc.sh'.format(sample_name, celltype))
 
 def merge_samples(
 	bams, 

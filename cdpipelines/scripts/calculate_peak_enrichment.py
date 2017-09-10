@@ -15,7 +15,30 @@ import os
 import numpy as np
 import subprocess
 import logging
+import warnings
 functional_celltypes = ['iPSC', 'CM', 'PP3', 'RPE']
+
+def findCellTypeAndReadCount(dataID):
+	#1.  Query the database for cell type and number of input reads
+	subp1=subprocess.Popen(['python','queryDatabase.py','-data','data_id,cell,Number_of_input_reads','-dataType','atacs','--pickle','atac_QC_database_query.pkl'])
+	subp1.wait()
+	query=pd.read_pickle('atac_QC_database_query.pkl')
+	query.index=[i for i in range(len(query))]
+	query['data_id']=[ID[:8]+'-'+ID[8:12]+'-'+ID[12:16]+'-'+ID[16:20]+'-'+ID[20:] for ID in query['data_id']]
+
+	dataIDtoCell={query.loc[ind,'data_id']:query.loc[ind,'cell'] for ind in query.index}
+	dataIDtoReadNum={query.loc[ind,'data_id']:query.loc[ind,'Number_of_input_reads'] for ind in query.index}
+	
+	ID=dataID
+	
+	if ID not in dataIDtoReadNum:
+		return 'readCountErr','readCountErr'
+	
+	
+	if dataIDtoCell[ID]!='CM' and dataIDtoCell[ID]!='iPSC' and dataIDtoCell[ID]!='PP3':
+		return 'cellTypeErr','cellTypeErr'
+	
+	return dataIDtoCell[ID],dataIDtoReadNum[ID]
 
 def readPeaks(peakFile):
 	Peaks=[]
@@ -51,7 +74,24 @@ def readRoadmapStates(cellType='iPSC'):
 	return chromosomeToRegions
 
 def countPeakStates(peaks,chromosomeToRegions):
-	#tuple of [fully within promoter or enhancer, partially within promoter or enhancer, not within promoter or enhancer,wrong chr]
+	"""
+	Determines the number of peaks which are fully within promoter or enhancer, partially within promoter or enhancer,
+	not within promoter or enhancer, wrong chr. 
+
+
+	Parameters
+	----------
+	peaks: peak data (generated using the readPeaks function).
+	chromosomeToRegions: celltype specific roadmap data (generated using readRoadmapState the countPeakStates function).
+
+	Returns
+	-------
+	PeakDistribution: tuple
+		counts the number of peaks which are fully within promoter or enhancer, partially within promoter or enhancer, 
+		not within promoter or enhancer, or on an incorrect chromosome.
+		
+	"""
+	#tuple of [
 	peakDistribution=[0,0,0,0]
 	for i in range(len(peaks)):
 		peak=peaks[i]
@@ -95,95 +135,70 @@ def exportActiveStates(roadmapStates,filePath):
 				
 	return
 
-def QC_function(dataID,region_coverage_path,var_coverage_path,cellType,NumInputReads,peakFile,bamFile):
-	#6 steps:
-	#1.  Query the database for cell type and number of input reads (done in previous function call or passed as cmd line arg)
-	#2.  Read each roadmap type
-	#3.  Read the peak file
-	#4.  Find the state counts for the peaks
-	#5.  Find the coverage of reads within the roadmap sites
-	#6.  Find the median depth of common variants within the reference sites
+
+def QC_function(dataID, region_coverage_path, var_coverage_path, cellType, NumInputReads, peakFile, bamFile):
+	"""
+	QC-ing the ATAC-seq results. 
+	Determined the fraction of (full) peaks in active elements, the fraction of reads in peaks, and the 
+	median depth of common variants in cell type/ATAC-seq specific positions. 
+	#1.  Read each roadmap type
+	#2.  Read the peak file
+	#3.  Find the state counts for the peaks
+	#4.  Find the coverage of reads within the roadmap sites
+	#5.  Find the median depth of common variants within the reference sites
+
+
+	Parameters
+	----------
+
+	Returns
+	-------
+	results: pd.DataFrame
+		A dataframe of the gathered data. 
+
+	"""
 	   
-	ID=dataID
-	
-	results=[]
-	
-	#Start sample by sample analysis
+	results_cols = ['Data ID', 'Fraction Peaks in Active Elements', 'Fraction Reads in Active Elements', \
+					'Mean Coverage of Common Vars', 'Error Code', 'cellType']
 
-	#3.  Read the peaks
-	logging.info('Reading Peak File')
-	peaks=readPeaks(peakFile)
-
-	#4.  Find the state counts for the peaks
+	#1.  Find the state counts for the peaks
 	logging.info('Finding Peak States')
-	if cellType in ['iPSC']:
-		cellTypeRoadmap=readRoadmapStates(cellType='iPSC')
-	elif cellType in ['CM']:
-		cellTypeRoadmap=readRoadmapStates(cellType='CM')
-	elif cellType in ['PP3']:
-		cellTypeRoadmap=readRoadmapStates(cellType='PP3')
-	else: # Default to iPSC if code for cell type has not been implemented.
-		cellTypeRoadmap=readRoadmapStates(cellType='iPSC')
-	peakDist=countPeakStates(peaks,cellTypeRoadmap)
+	if cellType in ['iPSC', 'CM']:
+		cellTypeRoadmap = readRoadmapStates(cellType=cellType)
+		active_elements_bed = '/projects/CARDIPS/pipeline/ATACseq/reference_files/{}_active_elements.bed'.format(cellType)
+		common_variants_position = '/projects/CARDIPS/pipeline/ATACseq/reference_files/{}_ATAC_Common_Vars.positions'.format(cellType)
 
-	fractionActivePeaks=float(peakDist[0])/sum(peakDist)
+		#2.  Read the peaks
+		logging.info('Reading Peak File')
+		peaks = readPeaks(peakFile)
 
-	logging.info('Finding Peak Coverage')
-	#5.  Call bedtools coverage for active regions
-	if cellType in ['iPSC']:
-		subp2=subprocess.Popen(['module load bedtools; bedtools coverage -sorted -b '+bamFile+' -a /projects/CARDIPS/pipeline/ATACseq/reference_files/iPSC_active_elements.bed > '+region_coverage_path],shell=True)
-	elif cellType in ['CM']:
-		subp2=subprocess.Popen(['module load bedtools; bedtools coverage -sorted -b '+bamFile+' -a /projects/CARDIPS/pipeline/ATACseq/reference_files/CM_active_elements.bed > '+region_coverage_path],shell=True)
-	elif cellType in ['PP3']:
-		subp2=subprocess.Popen(['module load bedtools; bedtools coverage -sorted -b '+bamFile+' -a /projects/T2D/pipeline/ATACseq/reference_files/islet_active_elements.bed > '+region_coverage_path],shell=True)
-	else: # Default to iPSC if code for cell type has not been implemented.
-		subp2=subprocess.Popen(['module load bedtools; bedtools coverage -sorted -b '+bamFile+' -a /projects/CARDIPS/pipeline/ATACseq/reference_files/iPSC_active_elements.bed > '+region_coverage_path],shell=True)
-	subp2.wait()
-	activeReads=sum([int(line.strip().split()[3]) for line in open(region_coverage_path,'r')])
-	fractionActiveReads=float(activeReads)/NumInputReads
+		#3.  Find the state counts for the peaks
+		peakDist = countPeakStates(peaks, cellTypeRoadmap)
+		fractionActivePeaks = float(peakDist[0])/sum(peakDist)
 
-	logging.info('Finding Variant Coverage')
-	#6. Call bedtools coverage for common variants
-	if cellType in ['iPSC']:
-		subp3=subprocess.Popen(['module load samtools; samtools mpileup -A --positions /projects/CARDIPS/pipeline/ATACseq/reference_files/iPSC_ATAC_Common_Vars.positions -o '+var_coverage_path+' '+bamFile],shell=True)
+		#4.  Find the coverage of reads within the roadmap sites
+		logging.info('Finding Peak Coverage')
+		subp2 = subprocess.Popen('module load bedtools; bedtools coverage -sorted -b {} -a {} > {}'.format(bamFile, active_elements_bed, region_coverage_path), shell=True)
+		subp2.wait()
+		activeReads = sum([int(line.strip().split()[3]) for line in open(region_coverage_path,'r')])
+		fractionActiveReads = float(activeReads)/NumInputReads
+
+		#5.  Find the median depth of common variants within the reference sites
+		logging.info('Finding Variant Coverage')
+		subp3 = subprocess.Popen('module load samtools; samtools mpileup -A --positions {} -o {} {}'.format(common_variants_position, var_coverage_path, bamFile), shell=True)
 		subp3.wait()
-		meanVarCov=np.mean([int(line.strip().split()[3]) for line in open(var_coverage_path,'r')])
-	elif cellType in ['CM']:
-		subp3=subprocess.Popen(['module load samtools; samtools mpileup -A --positions /projects/CARDIPS/pipeline/ATACseq/reference_files/CM_ATAC_Common_Vars.positions -o '+var_coverage_path+' '+bamFile],shell=True)
-		subp3.wait()
-		meanVarCov=np.mean([int(line.strip().split()[3]) for line in open(var_coverage_path,'r')])
-	elif cellType in ['PP3']:
-		meanVarCov=0
-	else: # Default to iPSC if code for cell type has not been implemented.
-		subp2=subprocess.Popen(['module load bedtools; bedtools coverage -sorted -b '+bamFile+' -a /projects/CARDIPS/pipeline/ATACseq/reference_files/iPSC_active_elements.bed > '+region_coverage_path],shell=True)
-		meanVarCov=np.mean([int(line.strip().split()[3]) for line in open(var_coverage_path,'r')])
+		meanVarCov = np.mean([int(line.strip().split()[3]) for line in open(var_coverage_path,'r')])
 
-	res=[ID,fractionActivePeaks,fractionActiveReads,meanVarCov,'No Error During QC', cellType]
-	results.append(res)
+		results = [dataID, fractionActivePeaks, fractionActiveReads, meanVarCov, 'No Error During QC', cellType]
+		results = pd.DataFrame([results], columns=results_cols)
 
-	return pd.DataFrame(results,columns=['Data ID','Fraction Peaks in Active Elements','Fraction Reads in Active Elements','Mean Coverage of Common Vars','Error Code', cellType])
+	else:
 
-def findCellTypeAndReadCount(dataID):
-	#1.  Query the database for cell type and number of input reads
-	subp1=subprocess.Popen(['python','queryDatabase.py','-data','data_id,cell,Number_of_input_reads','-dataType','atacs','--pickle','atac_QC_database_query.pkl'])
-	subp1.wait()
-	query=pd.read_pickle('atac_QC_database_query.pkl')
-	query.index=[i for i in range(len(query))]
-	query['data_id']=[ID[:8]+'-'+ID[8:12]+'-'+ID[12:16]+'-'+ID[16:20]+'-'+ID[20:] for ID in query['data_id']]
+		results = [dataID, np.nan, np.nan, np.nan, 'Celltype {} not supported'.format(cellType), cellType]
+		results = pd.DataFrame([results], columns=results_cols)
+		warnings.warn('Error: Celltype {} is not supported. Empty dataframe was output.'.format(cellType))
 
-	dataIDtoCell={query.loc[ind,'data_id']:query.loc[ind,'cell'] for ind in query.index}
-	dataIDtoReadNum={query.loc[ind,'data_id']:query.loc[ind,'Number_of_input_reads'] for ind in query.index}
-	
-	ID=dataID
-	
-	if ID not in dataIDtoReadNum:
-		return 'readCountErr','readCountErr'
-	
-	
-	if dataIDtoCell[ID]!='CM' and dataIDtoCell[ID]!='iPSC' and dataIDtoCell[ID]!='PP3':
-		return 'cellTypeErr','cellTypeErr'
-	
-	return dataIDtoCell[ID],dataIDtoReadNum[ID]
+	return results  
 
 
 if __name__ == '__main__':
@@ -220,38 +235,38 @@ if __name__ == '__main__':
 	=====================
 	''')
 
-
+	ID = args['dataID']
 	# Parsing the inputs and extracting data for the qc functions 
-	results = []
+	results_cols = ['Data ID','Fraction Peaks in Active Elements','Fraction Reads in Active Elements','Mean Coverage of Common Vars','Error Code']
+
 	if args['cellType']=='Not Given' or args['NumInputReads']==-1:
 		if args['cellType']=='Not Given' and args['NumInputReads']==-1:
 			cellType,NumInputReads=findCellTypeAndReadCount(args['input'])
+
 			if NumInputReads=='readCountErr':
-				res=[ID,-1,-1,-1,'Data ID not linked to sample']
-				results.append(res)
-				temp=pd.DataFrame(results,columns=['Data ID','Fraction Peaks in Active Elements','Fraction Reads in Active Elements','Mean Coverage of Common Vars','Error Code'])
-				temp.to_csv(args['output'],sep='\t',index=False)
+				results=[ID, np.nan, np.nan, np.nan,'Error: Number of input reads was not passed.']
+				results=pd.DataFrame([results], columns=results_cols)
+				results.to_csv(args['output'], sep='\t', index=False)
+				warnings.warn('--NumInputReads must be passed. Empty dataframe was output.')
 				exit()
+
 			elif cellType=='cellTypeErr':
-				res=[ID,-1,-1,-1, 'Cell type is not iPSC, CM, or PP3']
-				results.append(res)
-				temp=pd.DataFrame(results,columns=['Data ID','Fraction Peaks in Active Elements','Fraction Reads in Active Elements','Mean Coverage of Common Vars','Error Code'])
-				temp.to_csv(args['output'],sep='\t',index=False)
+				results=[ID, np.nan, np.nan, np.nan,'Error: Celltype information was not passed.']
+				results=pd.DataFrame([results], columns=results_cols)
+				results.to_csv(args['output'], sep='\t', index=False)
+				warnings.warn('--cellType must be used. Empty dataframe was output.')
 				exit()
 		else:
-			print('--cellType and --NumInputReads must be used in tandem.')
+			results=[ID, np.nan, np.nan, np.nan,'Error: Read count and celltype information was not passed.']
+			results=pd.DataFrame([results], columns=results_cols)
+			results.to_csv(args['output'], sep='\t', index=False)
+			warnings.warn('--cellType and --NumInputReads must be used in tandem. Empty dataframe was output.')
 			exit()
 	else:
-		cellType=args['cellType']
-		if cellType not in functional_celltypes:
-			res = [args['dataID'], '', '','','Celltype {} not supported'.format(cellType)]
-			results.append(res)
-			temp=pd.DataFrame(results,columns=['Data ID','Fraction Peaks in Active Elements','Fraction Reads in Active Elements','Mean Coverage of Common Vars','Error Code'])
-			temp.to_csv(args['output'],sep='\t',index=False)
-			exit()
-		NumInputReads=args['NumInputReads']
-
+		cellType = args['cellType']
+		NumInputReads = args['NumInputReads']
 	# Running the qc function 
-	QC_function(args['dataID'],args['reg_cov'],args['var_cov'],cellType,NumInputReads,args['peak'],args['bam']).to_csv(args['output'],sep='\t',index=False)
+	results = QC_function(ID, args['reg_cov'], args['var_cov'], cellType, NumInputReads, args['peak'], args['bam'])
+	results.to_csv(args['output'], sep='\t', index=False)
 
 
