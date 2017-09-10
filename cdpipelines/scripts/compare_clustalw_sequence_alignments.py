@@ -5,7 +5,7 @@ import argparse
 import hlapy
 import subprocess
 
-testing = False 
+testing = True 
 def determine_unknown_indel_length(seq1, seq2):  
     """
     Determine how much unknown sequence is found in one allele versus another. 
@@ -162,8 +162,6 @@ def generate_unknown_indel_report(allele1_fn, allele2_fn):
     seq1 = linearize_seq(open(allele1_fn).read())
     seq2 = linearize_seq(open(allele2_fn).read())
     
-    
-
     # COMPARING the two sequences for any unknown sequences between them.  
     five_prime_diff, five_prime_variant_len, five_prime_skip = determine_unknown_indel_length(seq1, seq2)
     three_prime_diff, three_prime_variant_len, three_prime_skip = determine_unknown_indel_length(list(reversed(seq1)), list(reversed(seq2)))
@@ -268,7 +266,6 @@ if __name__ == '__main__':
     allele2_grep = allele2.replace('*', '\\\*').replace(':', '\:')
     allele2_alignment = os.path.join(tmp_dir, '{}_alignment.txt'.format(allele2_name))
     cmd = "grep -w {} {} | cut -f 3- -d ' '  | sed 's/^\s*//'".format(allele2_grep, gene_clustalw, allele2_alignment)
-
     allele2_alignment = subprocess.check_output(cmd, shell=True)
 
     if test_dir:

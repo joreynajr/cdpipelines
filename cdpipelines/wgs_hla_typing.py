@@ -2,6 +2,7 @@ import os
 import glob 
 import itertools as it 
 import datetime as dt
+import pandas as pd
 from cdpipelines.general import JobScript
 
 JOBNAMES = ['bamtofastq', 'run_phlat', 'align_to_hla', 'run_vbseq']
@@ -466,16 +467,26 @@ class WGS_HLAJobScript(JobScript):
         """
         if suffix:
             mpileup = os.path.join(self.outdir, '{}_{}.mpileup'.format(self.sample_name, suffix))
+            mpileup_parsed = os.path.join(self.outdir, '{}_{}.mpileup.parsed'.format(self.sample_name, suffix))
 
         else:
             mpileup = os.path.join(self.outdir, '{}.mpileup'.format(self.sample_name))
+            mpileup_parsed = os.path.join(self.outdir, '{}.mpileup.parsed'.format(self.sample_name))
 
         cmd = '{} mpileup -A -a -f {} --positions {} -o {} {}'.format(samtools_path, allele_fasta, allele_bed, mpileup, sorted_bam)
-
         lines = self._add_execution_date(cmd)
         with open(self.filename, "a") as f:
             f.write('\n'.join(lines))
-        return mpileup  
+
+        from __init__ import _scripts 
+        parse_mpileup_script = os.path.join(_scripts, 'pileup2base/pileup2baseindel.pl')
+        cmd = 'perl {} -i {} -prefix {}'.format(parse_mpileup_script, mpileup, mpileup_parsed)
+        lines = self._add_execution_date(cmd)
+        with open(self.filename, "a") as f:
+            f.write('\n'.join(lines))
+            f.write('\nmv {0}1.txt {0}'.format(mpileup_parsed))
+
+        return mpileup, mpileup_parsed
 
 
     def phlat_typing(
@@ -625,7 +636,110 @@ class WGS_HLAJobScript(JobScript):
             
         return output_bed, output_fasta
 
+    def select_vbseq_alleles(self, raw_vbseq, top_selections, hla_bed, hla_fasta):
+        """
+        raw_vbseq: str
+            Path to the raw vbseq results (*.vbseq.avgdp')
+            
+        top_selection: list
+            Indexes for selecting some allele based on the descent order.
+            
+        hla_bed: str
+            Bed file with the coordinates of all HLA types. 
+        
+        hla_fasta: str
+            Fasta file with the sequences of all HLA types.
+            
+        """
+        
+        # DETERMINING the top allele for each HLA gene.
+        raw_vbseq = pd.read_table(raw_vbseq, header=None, names=['allele', 'mean_read_depth'])
+        raw_vbseq['gene'] = [x[0] for x in raw_vbseq.allele.str.split('*')]
+        gene_grps = raw_vbseq.groupby('gene')
+        select_alleles = gene_grps.apply(\
+              lambda x: x.sort_values('mean_read_depth', ascending=False).iloc[top_selections])
+        select_alleles.reset_index(drop=True, inplace=True)
+        select_alleles.set_index('allele', inplace=True)
+
+        # PUllING the coordinates for the alleles of interest.  
+        allele_coords = pd.read_table(hla_bed, names = ['accession', 'start', 'end', 'allele'], header=None)
+        allele_coords = allele_coords[allele_coords['allele'].isin(select_alleles.index.tolist())]
+        
+        # SAVING the coordinates 
+        output_bed = os.path.join(self.outdir, '{}_select_alleles.bed'.format(self.sample_name))
+        allele_coords.to_csv(output_bed, index=False, header=False, sep='\t')
+        
+        # SAVING a version with reversed accession and allele locations
+        rev_output_bed = os.path.join(self.outdir, '{}_rev_select_alleles.bed'.format(self.sample_name))
+        rev_allele_coords = allele_coords[[ 'allele', 'start', 'end', 'accession']]
+        rev_allele_coords.to_csv(rev_output_bed, index=False, header=False, sep='\t')
+
+        # GENERATING the fasta file 
+        output_fasta = os.path.join(self.outdir, '{}_select_alleles.fasta'.format(self.sample_name))
+        cmd = 'bedtools getfasta -fi {} -bed {} -fo {} -name'.format(hla_fasta, output_bed, output_fasta)
+        
+        lines = self._add_execution_date(cmd)
+        with open(self.filename, "a") as f:
+            lines = '\n'.join(lines)
+            f.write(lines)
+        
+        return output_bed, rev_output_bed, output_fasta 
     
+    def bwa_map(
+        self,
+        ref,
+        r1_fastq,
+        r2_fastq,
+        stringent=False,
+        suffix=None,
+    ):
+        """
+        Aligning paired end data to specific allele reference sequences using bwa.
+
+        - bwa P is used for paired-end data.
+        - samtools -F 4 is used to extract mapped reads only.
+
+
+        Parameters
+        __________
+        hla_ref : str
+            Path to hla_ref file.
+        r1_fastq : str
+            Path to input r1 fastq file.
+        r2_fastq : str
+            Path to input r2 fastq file.
+            Path to bowtie2.
+
+        Returns
+        -------
+        out_bam : str
+            Path to bam file.
+        """
+        if suffix: 
+            out_bam = os.path.join(self.outdir, '{}_{}.bam'.format(self.sample_name, suffix))
+        else: 
+            out_bam = os.path.join(self.outdir, '{}.bam'.format(self.sample_name))
+
+        if stringent:
+            cmd = 'bwa mem -P -B 40 -O 60 -E 10 -L 10000 -t {} {} {} {} | samtools view -F 4 -b - > {}'.\
+                format(self.threads,
+                ref,
+                r1_fastq,
+                r2_fastq,
+                out_bam)
+        else:
+            cmd = 'bwa mem -P -L 10000 -t {} {} {} {} | samtools view -F 4 -b - > {}'.\
+                format(self.threads,
+                ref,
+                r1_fastq,
+                r2_fastq,
+                out_bam)
+
+        lines = self._add_execution_date(cmd)
+        with open(self.filename, 'a') as f:
+            f.write('\n'.join(lines))
+        return out_bam
+
     def bash_submit_command(self):
         """Get command to submit script."""
         if self.wait_for:
@@ -1241,3 +1355,106 @@ def rerun_top_alleles_pipeline(
             f.write('#!/bin/bash\n\n')
             f.write('\n'.join(submit_commands))   
     return submit_fn
+
+def mpileup_on_select_alleles_pipeline(
+        sample_name,
+        raw_vbseq,
+        top_choices, 
+        hla_bed, 
+        hla_fasta, 
+        r1_fastq,
+        r2_fastq,
+        outdir,
+        queue = None,
+        conda_env = None,
+    ):  
+    """
+    Make SGE/shell scripts for running the entire HLA pipeline. The defaults
+    are set for use on the Frazer lab's SGE schedule on flh1/flh2. 
+
+    Parameters
+    __________
+    resolution: int
+        HLA type resolution to consider. 
+    top: int 
+        Number of top alleles to consider
+    hla_bed: str
+        Bed file derived from hla_gen.fasta
+    hla_ref
+        HLA reference file from IPD/IMGT HLA database, (e.g. hla_gen.fasta)
+    mhc_bam : str
+    linkdir : str, 
+    outdir : str,
+    hla_regions_bed: str,
+    coverage_bed: str,
+    queue : str
+    webpath: str
+    """
+
+    submit_commands = []
+    ##### Job 1: Selecting alleles 
+    job = WGS_HLAJobScript(sample_name, 'select_alleles', os.path.join(outdir, 'mpileup'), 1, 1, 
+                                    queue = queue, 
+                                    conda_env=conda_env,
+                                    modules = 'bedtools,bwa')
+    select_alleles_job = job.jobname
+    job.add_input_file(raw_vbseq)
+    job.add_input_file(hla_bed)
+    job.add_input_file(hla_fasta)
+    select_alleles_bed, rev_select_alleles_bed, select_alleles_fasta = \
+            job.select_vbseq_alleles(raw_vbseq, top_choices, hla_bed, hla_fasta)
+    select_alleles_bwa_indexes = job.bwa_index(select_alleles_fasta)
+    job.add_output_file(select_alleles_bed)
+    job.add_output_file(rev_select_alleles_bed)
+    job.add_output_file(select_alleles_fasta)
+    job.write_end()
+    if not job.delete_sh:
+        submit_commands.append(job.sge_submit_command())
+
+    ##### Job 2: Aligning reads reference 
+    job = WGS_HLAJobScript(sample_name, 'align_to_select_alleles', os.path.join(outdir, 'mpileup'), 1, 4, 
+                                    queue = queue, 
+                                    conda_env=conda_env,
+                                    modules = 'bwa,samtools,sambamba',
+                                    wait_for = [select_alleles_job])
+    aln_select_jobname = job.jobname
+
+    job.add_input_file(r1_fastq)
+    job.add_input_file(r2_fastq)
+    select_alleles_bam = job.bwa_map(select_alleles_fasta, r1_fastq, r2_fastq, suffix='select_alleles')
+    select_alleles_sorted_bam = job.sambamba_sort(select_alleles_bam, suffix='select_alleles')
+    select_alleles_sorted_bai = job.sambamba_index(select_alleles_sorted_bam, suffix='select_alleles')
+
+    job.add_output_file(select_alleles_bam)
+    job.add_output_file(select_alleles_sorted_bam)
+    job.add_output_file(select_alleles_sorted_bai)
+    job.write_end()
+    if not job.delete_sh:
+        submit_commands.append(job.sge_submit_command())
+
+    ##### Job 3: Running mpileup
+    job = WGS_HLAJobScript(sample_name, 'mpileup_select_alleles', os.path.join(outdir, 'mpileup'), 1, 4, 
+                                    queue = queue, 
+                                    conda_env=conda_env,
+                                    modules = 'samtools/1.4',
+                                    wait_for = [aln_select_jobname])
+    mpile_select_jobname = job.jobname
+    job.add_input_file(select_alleles_sorted_bam)
+    job.add_input_file(select_alleles_fasta)
+    job.add_input_file(hla_bed)
+    select_alleles_mpile, select_alleles_mpile_parsed = job.samtools_mpileup(select_alleles_sorted_bam, select_alleles_fasta, 
+                                       rev_select_alleles_bed, suffix='select_alleles')
+    job.add_output_file(select_alleles_mpile)
+    job.write_end()
+    if not job.delete_sh:
+        submit_commands.append(job.sge_submit_command())
+
+    ##### Submission script #####
+    now = str(dt.datetime.now())
+    now = now.replace('-', '_').replace(' ', '_').replace(':', '_').replace('.', '_')
+    submit_fn = os.path.join(outdir, 'sh/', '{}_submit_{}.sh'.format(sample_name, now))
+    with open(submit_fn, 'w') as f:
+            f.write('#!/bin/bash\n\n')
+            f.write('\n'.join(submit_commands))   
+    return submit_fn
+
